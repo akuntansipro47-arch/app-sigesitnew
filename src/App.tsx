@@ -101,6 +101,23 @@ type AirQualityTest = {
 
 type AirQualityTestRow = { id: string; location_id: string; test_date: string; officer_id: string; temperature_1: number | null; temperature_2: number | null; temperature_3: number | null; temperature_unit: string; humidity_1: number | null; humidity_2: number | null; humidity_3: number | null; noise_1: number | null; noise_2: number | null; noise_3: number | null; lighting_1: number | null; lighting_2: number | null; lighting_3: number | null; pm25_1: number | null; pm25_2: number | null; pm25_3: number | null; pm10_1: number | null; pm10_2: number | null; pm10_3: number | null; ventilation_rate_1: number | null; ventilation_rate_2: number | null; ventilation_rate_3: number | null; notes: string | null }
 
+// PKM Info types
+type PKMInfo = {
+  id: string
+  namaPkm: string
+  alamatPkm: string
+  noTelepon: string
+  penanggungJawab: string
+  website?: string
+  instagram?: string
+  facebook?: string
+  twitter?: string
+  logoUrl?: string
+  logoStoragePath?: string
+}
+
+type PKMInfoRow = { id: string; nama_pkm: string; alamat_pkm: string; no_telepon: string; penanggung_jawab: string; website: string | null; instagram: string | null; facebook: string | null; twitter: string | null; logo_url: string | null; logo_storage_path: string | null }
+
 // Entry module types
 type FamilyCard = {
   id: string
@@ -280,6 +297,22 @@ function mapAirQualityTestRow(row: AirQualityTestRow): AirQualityTest {
   }
 }
 
+function mapPKMInfoRow(row: PKMInfoRow): PKMInfo {
+  return {
+    id: row.id,
+    namaPkm: row.nama_pkm,
+    alamatPkm: row.alamat_pkm,
+    noTelepon: row.no_telepon,
+    penanggungJawab: row.penanggung_jawab,
+    website: row.website ?? undefined,
+    instagram: row.instagram ?? undefined,
+    facebook: row.facebook ?? undefined,
+    twitter: row.twitter ?? undefined,
+    logoUrl: row.logo_url ?? undefined,
+    logoStoragePath: row.logo_storage_path ?? undefined,
+  }
+}
+
 async function getFunctionErrorMessage(error: unknown): Promise<string | null> {
   if (error && typeof error === 'object' && 'context' in error) {
     const context = error.context
@@ -322,6 +355,7 @@ function App() {
   const [rt, setRt] = useState(initialRt)
   const [regionsLoaded, setRegionsLoaded] = useState(false)
   const [locations, setLocations] = useState<Location[]>([])
+  const [pkmInfo, setPkmInfo] = useState<PKMInfo | null>(null)
   const [session, setSession] = useState<Session | null>(null)
   const [profile, setProfile] = useState<UserProfile | null>(null)
   const [authReady, setAuthReady] = useState(!supabaseConfigured)
@@ -436,27 +470,53 @@ function App() {
     void loadLocations()
   }, [])
 
+  useEffect(() => {
+    async function loadPKMInfo() {
+      if (supabaseConfigured && supabase) {
+        const { data, error } = await supabase.from('pkm_info').select('*').single()
+        if (!error && data) {
+          setPkmInfo(mapPKMInfoRow(data as PKMInfoRow))
+        }
+      }
+    }
+    void loadPKMInfo()
+  }, [])
+
   if (supabaseConfigured && !authReady) return <main className="auth-shell"><p className="auth-loading">Memuat sesi…</p></main>
   if (supabaseConfigured && !session) return <LoginPage />
 
   const displayName = profile?.fullName ?? 'Syifa Zahra'
   const initials = displayName.split(' ').map((part) => part[0]).slice(0, 2).join('').toUpperCase()
   const canAccessPengguna = true
+  const pkmName = pkmInfo?.namaPkm || 'Sandas PKM Padasuka'
+  const pkmLogo = pkmInfo?.logoUrl
 
   return <main className="app-shell">
     <header className="topbar">
-      <div className="brand"><div className="brand-mark">S</div><div><strong>SIGESIT</strong><span>Sandas PKM Padasuka</span></div></div>
+      <div className="brand">
+        {pkmLogo ? (
+          <img src={pkmLogo} alt="Logo PKM" style={{ width: '40px', height: '40px', borderRadius: '10px', objectFit: 'contain' }} />
+        ) : (
+          <div className="brand-mark">S</div>
+        )}
+        <div><strong>SIGESIT</strong><span>{pkmName}</span></div>
+      </div>
       <div className="topbar-actions"><button className={`connection ${online ? 'online' : 'offline'}`} onClick={() => setOnline(!online)} type="button"><i />{online ? 'Terhubung' : 'Offline'}</button><button className="avatar" type="button" aria-label={`Profil ${displayName}`}>{initials || 'SZ'}</button>{session && <button className="logout" onClick={() => { void supabase?.auth.signOut() }} type="button">Keluar</button>}</div>
     </header>
     <section className="workspace">
       <aside className="sidebar">
+        {pkmLogo && (
+          <div style={{ padding: '16px', textAlign: 'center', marginBottom: '16px' }}>
+            <img src={pkmLogo} alt="Logo PKM" style={{ width: '60px', height: '60px', borderRadius: '12px', objectFit: 'contain' }} />
+          </div>
+        )}
         <p className="side-label">MENU UTAMA</p><nav><button className={view === 'beranda' ? 'active' : ''} onClick={() => setView('beranda')} type="button"><span>⌂</span> Beranda</button><button className={view === 'entry' ? 'active' : ''} onClick={() => setView('entry')} type="button"><span>+</span> Entry Data</button></nav>
         <p className="side-label">PEMERIKSAAN</p><nav><button className={view === 'uji_air' ? 'active' : ''} onClick={() => setView('uji_air')} type="button"><span>💧</span> Uji Air</button><button className={view === 'uji_udara' ? 'active' : ''} onClick={() => setView('uji_udara')} type="button"><span>🌬️</span> Uji Udara</button></nav>
         <p className="side-label">DATA MASTER</p><nav><button className={view === 'wilayah' ? 'active' : ''} onClick={() => setView('wilayah')} type="button"><span>⌘</span> Wilayah</button><button className={view === 'lokasi' ? 'active' : ''} onClick={() => setView('lokasi')} type="button"><span>📍</span> Lokasi</button>{canAccessPengguna && <button className={view === 'pengguna' ? 'active' : ''} onClick={() => setView('pengguna')} type="button"><span>♙</span> Pengguna</button>}</nav>
-        <p className="side-label">AKUN</p><nav><button className={view === 'profile' ? 'active' : ''} onClick={() => setView('profile')} type="button"><span>👤</span> Profil Saya</button></nav>
+        <p className="side-label">AKUN</p><nav><button className={view === 'profile' ? 'active' : ''} onClick={() => setView('profile')} type="button"><span>👤</span> Profil PKM</button></nav>
         <div className="sidebar-footer"><span className="sync-dot" /><div><strong>1 data belum sinkron</strong><small>Data akan terkirim saat online</small></div></div>
       </aside>
-      <section className="content">{view === 'entry' ? <EntryPage profile={profile} kelurahan={kelurahan} rw={rw} rt={rt} /> : view === 'wilayah' ? <WilayahPage kelurahan={kelurahan} rw={rw} rt={rt} setKelurahan={setKelurahan} setRw={setRw} setRt={setRt} /> : view === 'pengguna' && canAccessPengguna ? <PenggunaPage kelurahan={kelurahan} rw={rw} rt={rt} currentUserId={session?.user.id} /> : view === 'profile' ? <ProfilePage profile={profile} kelurahan={kelurahan} rw={rw} rt={rt} /> : view === 'lokasi' ? <LokasiPage kelurahan={kelurahan} rw={rw} rt={rt} /> : view === 'uji_air' ? <UjiAirPage profile={profile} locations={locations} /> : view === 'uji_udara' ? <UjiUdaraPage profile={profile} locations={locations} /> : <Dashboard view={view} setView={setView} />}</section>
+      <section className="content">{view === 'entry' ? <EntryPage profile={profile} kelurahan={kelurahan} rw={rw} rt={rt} /> : view === 'wilayah' ? <WilayahPage kelurahan={kelurahan} rw={rw} rt={rt} setKelurahan={setKelurahan} setRw={setRw} setRt={setRt} /> : view === 'pengguna' && canAccessPengguna ? <PenggunaPage kelurahan={kelurahan} rw={rw} rt={rt} currentUserId={session?.user.id} /> : view === 'profile' ? <ProfilePage /> : view === 'lokasi' ? <LokasiPage kelurahan={kelurahan} rw={rw} rt={rt} /> : view === 'uji_air' ? <UjiAirPage profile={profile} locations={locations} /> : view === 'uji_udara' ? <UjiUdaraPage profile={profile} locations={locations} /> : <Dashboard view={view} setView={setView} pkmInfo={pkmInfo} />}</section>
     </section>
   </main>
 }
@@ -531,10 +591,11 @@ function WilayahPage({ kelurahan, rw, rt, setKelurahan, setRw, setRt }: { kelura
   return <section className="master-page"><div className="page-heading"><div><p className="eyebrow">DATA MASTER</p><h1>Data Wilayah</h1><p>Kelola Kelurahan, RW, dan RT dengan hubungan wilayah yang terjaga.</p></div><button className="primary" onClick={() => openForm()} type="button">+ Tambah {level}</button></div><div className="region-tabs">{(['kelurahan', 'rw', 'rt'] as RegionLevel[]).map((tab) => <button className={level === tab ? 'active' : ''} key={tab} onClick={() => { setLevel(tab); setFormOpen(false) }} type="button">{tab.toUpperCase()} <span>{tab === 'kelurahan' ? kelurahan.length : tab === 'rw' ? rw.length : rt.length}</span></button>)}</div>{formOpen && <form className="region-form" onSubmit={save}><strong>{editing ? 'Edit' : 'Tambah'} {level}</strong><div className="region-form-fields"><label>Nama {level}<input name="name" defaultValue={editing?.name} placeholder={level === 'kelurahan' ? 'Nama kelurahan' : 'Contoh: 05'} required /></label>{level === 'kelurahan' && <label>Kode wilayah<input name="code" defaultValue={editing?.code} placeholder="Kode kelurahan" required /></label>}{level === 'rw' && <label>Kelurahan<select value={parentId} onChange={(event) => setParentId(event.target.value)} required><option value="">Pilih kelurahan</option>{kelurahan.map((parent) => <option key={parent.id} value={parent.id}>{parent.name}</option>)}</select></label>}{level === 'rt' && <><label>Kelurahan<select value={selectedKelurahanId} onChange={(event) => { setSelectedKelurahanId(event.target.value); setParentId('') }} required><option value="">Pilih kelurahan</option>{kelurahan.map((parent) => <option key={parent.id} value={parent.id}>{parent.name}</option>)}</select></label><label>RW<select value={parentId} onChange={(event) => setParentId(event.target.value)} disabled={!selectedKelurahanId} required><option value="">{selectedKelurahanId ? 'Pilih RW' : 'Pilih kelurahan terlebih dahulu'}</option>{parents.map((parent) => <option key={parent.id} value={parent.id}>RW {parent.name}</option>)}</select></label></>}</div><div className="form-actions"><button className="secondary" onClick={() => setFormOpen(false)} type="button">Batal</button><button className="primary" type="submit">Simpan</button></div></form>}<div className="region-list">{items.length === 0 ? <div className="empty-state"><span>⌘</span><h2>Belum ada data</h2><p>Tambahkan {level} untuk mulai membangun wilayah kerja.</p></div> : items.map((item) => <article className="region-row" key={item.id}><div><strong>{level === 'rw' ? `RW ${item.name}` : level === 'rt' ? `RT ${item.name}` : item.name}</strong><small>{level === 'kelurahan' ? `Kode: ${item.code}` : level === 'rt' ? rtLocation(item) : `Kelurahan: ${parentName(item)}`}</small></div><div className="row-actions"><button className="edit-button" onClick={() => openForm(item)} type="button">Edit</button><button className="delete-button" onClick={() => remove(item)} type="button">Hapus</button></div></article>)}</div></section>
 }
 
-function Dashboard({ view, setView }: { view: View; setView: (view: View) => void }) {
+function Dashboard({ view, setView, pkmInfo }: { view: View; setView: (view: View) => void; pkmInfo: PKMInfo | null }) {
   const title = view === 'wilayah' ? 'Data Wilayah' : view === 'pengguna' ? 'Pengguna Kader & Relawan' : 'Selamat pagi, Syifa.'
+  const pkmName = pkmInfo?.namaPkm || 'PKM Padasuka'
   if (view !== 'beranda') return <section className="master-page"><div className="page-heading"><div><p className="eyebrow">DATA MASTER</p><h1>{title}</h1><p>Kelola data yang digunakan oleh seluruh petugas lapangan.</p></div><button className="primary" type="button">+ Tambah data</button></div><div className="empty-state"><span>{view === 'wilayah' ? '⌘' : '♙'}</span><h2>Siap untuk dikelola</h2><p>Data {view === 'wilayah' ? 'kelurahan, RW, dan RT' : 'akun kader dan relawan'} akan tampil di sini.</p></div></section>
-  return <><div className="page-heading dashboard-heading"><div><p className="eyebrow">DASHBOARD LAPANGAN</p><h1>{title}</h1><p>Berikut ringkasan pendataan wilayah kerja Anda hari ini.</p></div><button className="primary" onClick={() => setView('entry')} type="button">+ Input data rumah</button></div><div className="stat-grid"><article className="stat-card"><span className="stat-icon teal">⌂</span><div><p>Rumah terdata</p><strong>128</strong><small>+ 12 minggu ini</small></div></article><article className="stat-card"><span className="stat-icon coral">♙</span><div><p>Total jiwa</p><strong>496</strong><small>Di RW 05</small></div></article><article className="stat-card"><span className="stat-icon gold">✓</span><div><p>Data tersinkron</p><strong>127</strong><small>Terakhir 10.08 WIB</small></div></article></div><section className="section-head"><div><h2>Aktivitas terbaru</h2><p>Data rumah tangga yang Anda entri hari ini</p></div><button className="text-button" type="button">Lihat semua</button></section><section className="entry-list">{entries.map((entry) => <article className="entry-row" key={entry.id}><div className="house-icon">⌂</div><div className="entry-detail"><strong>{entry.kepala}</strong><span>{entry.id} · {entry.location}</span></div><div className="entry-status"><span className={entry.status === 'Tersinkron' ? 'status synced' : 'status pending'}>{entry.status}</span><small>{entry.time} WIB</small></div></article>)}</section></>
+  return <><div className="page-heading dashboard-heading"><div><p className="eyebrow">DASHBOARD LAPANGAN</p><h1>{title}</h1><p>Berikut ringkasan pendataan wilayah kerja {pkmName} hari ini.</p></div><button className="primary" onClick={() => setView('entry')} type="button">+ Input data rumah</button></div><div className="stat-grid"><article className="stat-card"><span className="stat-icon teal">⌂</span><div><p>Rumah terdata</p><strong>128</strong><small>+ 12 minggu ini</small></div></article><article className="stat-card"><span className="stat-icon coral">♙</span><div><p>Total jiwa</p><strong>496</strong><small>Di RW 05</small></div></article><article className="stat-card"><span className="stat-icon gold">✓</span><div><p>Data tersinkron</p><strong>127</strong><small>Terakhir 10.08 WIB</small></div></article></div><section className="section-head"><div><h2>Aktivitas terbaru</h2><p>Data rumah tangga yang Anda entri hari ini</p></div><button className="text-button" type="button">Lihat semua</button></section><section className="entry-list">{entries.map((entry) => <article className="entry-row" key={entry.id}><div className="house-icon">⌂</div><div className="entry-detail"><strong>{entry.kepala}</strong><span>{entry.id} · {entry.location}</span></div><div className="entry-status"><span className={entry.status === 'Tersinkron' ? 'status synced' : 'status pending'}>{entry.status}</span><small>{entry.time} WIB</small></div></article>)}</section></>
 }
 
 function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null; kelurahan: Region[]; rw: Region[]; rt: Region[] }) {
@@ -986,138 +1047,237 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
   </section>
 }
 
-function ProfilePage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null; kelurahan: Region[]; rw: Region[]; rt: Region[] }) {
+function ProfilePage() {
+  const [pkmInfo, setPkmInfo] = useState<PKMInfo | null>(null)
+  const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState(false)
+  const [logoFile, setLogoFile] = useState<File | null>(null)
+  const [logoPreview, setLogoPreview] = useState<string | null>(null)
   
   const [formData, setFormData] = useState({
-    fullName: profile?.fullName || '',
-    nik: profile?.nik || '',
-    phone: profile?.phone || '',
-    email: profile?.email || '',
+    namaPkm: '',
+    alamatPkm: '',
+    noTelepon: '',
+    penanggungJawab: '',
+    website: '',
+    instagram: '',
+    facebook: '',
+    twitter: '',
   })
 
-  // Update formData when profile changes
-  useEffect(() => {
-    if (profile) {
+  async function loadPKMInfo() {
+    if (!supabase) return
+    setLoading(true)
+    const { data, error: loadError } = await supabase.from('pkm_info').select('*').single()
+    if (!loadError && data) {
+      const info = mapPKMInfoRow(data as PKMInfoRow)
+      setPkmInfo(info)
       setFormData({
-        fullName: profile.fullName || '',
-        nik: profile.nik || '',
-        phone: profile.phone || '',
-        email: profile.email || '',
+        namaPkm: info.namaPkm,
+        alamatPkm: info.alamatPkm,
+        noTelepon: info.noTelepon,
+        penanggungJawab: info.penanggungJawab,
+        website: info.website || '',
+        instagram: info.instagram || '',
+        facebook: info.facebook || '',
+        twitter: info.twitter || '',
       })
+      setLogoPreview(info.logoUrl || null)
     }
-  }, [profile])
+    setLoading(false)
+  }
+
+  useEffect(() => { void loadPKMInfo() }, [])
+
+  function handleLogoChange(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0]
+    if (file) {
+      setLogoFile(file)
+      const reader = new FileReader()
+      reader.onloadend = () => {
+        setLogoPreview(reader.result as string)
+      }
+      reader.readAsDataURL(file)
+    }
+  }
+
+  async function uploadLogo(file: File): Promise<string | null> {
+    if (!supabase) return null
+    
+    const fileExt = file.name.split('.').pop()
+    const fileName = `${Date.now()}.${fileExt}`
+    const filePath = `pkm-logos/${fileName}`
+
+    const { error: uploadError } = await supabase.storage
+      .from('pkm-logos')
+      .upload(filePath, file)
+
+    if (uploadError) {
+      console.error('Logo upload error:', uploadError)
+      return null
+    }
+
+    const { data: { publicUrl } } = supabase.storage
+      .from('pkm-logos')
+      .getPublicUrl(filePath)
+
+    return publicUrl
+  }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    if (!supabase || !profile) return
+    if (!supabase) return
     
     setSubmitting(true)
     setError('')
     setSuccess(false)
 
-    const { error: updateError } = await supabase.from('pkm_profiles').update({
-      full_name: formData.fullName,
-      nik: formData.nik,
-      phone: formData.phone,
-    }).eq('id', profile.id)
+    try {
+      let logoUrl = pkmInfo?.logoUrl
+      let logoStoragePath = pkmInfo?.logoStoragePath
 
-    if (updateError) {
-      setError(updateError.message)
-      setSubmitting(false)
-      return
-    }
-
-    // Update email in auth if changed
-    if (formData.email !== profile.email) {
-      const { error: emailError } = await supabase.auth.updateUser({ email: formData.email })
-      if (emailError) {
-        setError(emailError.message)
-        setSubmitting(false)
-        return
+      // Upload new logo if provided
+      if (logoFile) {
+        const uploadedUrl = await uploadLogo(logoFile)
+        if (uploadedUrl) {
+          logoUrl = uploadedUrl
+          logoStoragePath = `pkm-logos/${Date.now()}.${logoFile.name.split('.').pop()}`
+        }
       }
-    }
 
-    setSuccess(true)
-    setSubmitting(false)
-    
-    // Reload profile
-    setTimeout(() => window.location.reload(), 1500)
+      const payload = {
+        nama_pkm: formData.namaPkm,
+        alamat_pkm: formData.alamatPkm,
+        no_telepon: formData.noTelepon,
+        penanggung_jawab: formData.penanggungJawab,
+        website: formData.website || null,
+        instagram: formData.instagram || null,
+        facebook: formData.facebook || null,
+        twitter: formData.twitter || null,
+        logo_url: logoUrl,
+        logo_storage_path: logoStoragePath,
+      }
+
+      if (pkmInfo) {
+        const { error: updateError } = await supabase.from('pkm_info').update(payload).eq('id', pkmInfo.id)
+        if (updateError) throw updateError
+      } else {
+        const { error: insertError } = await supabase.from('pkm_info').insert(payload)
+        if (insertError) throw insertError
+      }
+
+      setSuccess(true)
+      setLogoFile(null)
+      void loadPKMInfo()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Gagal menyimpan profil PKM')
+    } finally {
+      setSubmitting(false)
+    }
   }
 
-  if (!profile) return <div className="empty-state"><span>♙</span><h2>Profil tidak ditemukan</h2></div>
+  if (loading) return <main className="auth-shell"><p className="auth-loading">Memuat profil PKM…</p></main>
 
   return <section className="master-page">
     <div className="page-heading">
       <div>
-        <p className="eyebrow">PROFIL SAYA</p>
-        <h1>Informasi Akun</h1>
-        <p>Kelola informasi profil dan akun Anda.</p>
+        <p className="eyebrow">PROFIL PKM</p>
+        <h1>Informasi PKM</h1>
+        <p>Kelola informasi PKM dan logo untuk tampilan aplikasi dan laporan.</p>
       </div>
     </div>
 
-    {success && <div className="saved-note" style={{ background: '#dcfce7', color: '#166534', border: '1px solid #bbf7d0' }}>Profil berhasil diperbarui!</div>}
+    {success && <div className="saved-note" style={{ background: '#dcfce7', color: '#166534', border: '1px solid #bbf7d0' }}>Profil PKM berhasil diperbarui!</div>}
     {error && <div className="error-message">{error}</div>}
 
-    <div className="form-section" style={{ maxWidth: '600px' }}>
+    <div className="form-section" style={{ maxWidth: '800px' }}>
       <form onSubmit={handleSubmit}>
-        <div className="form-grid" style={{ gridTemplateColumns: '1fr' }}>
-          <label>Nama Lengkap
+        <div className="form-grid" style={{ gridTemplateColumns: '1fr 1fr' }}>
+          <label className="wide">Logo PKM
+            <div style={{ display: 'flex', alignItems: 'center', gap: '16px', marginTop: '8px' }}>
+              {logoPreview && (
+                <img 
+                  src={logoPreview} 
+                  alt="Logo PKM" 
+                  style={{ width: '100px', height: '100px', objectFit: 'contain', border: '1px solid var(--line)', borderRadius: '8px' }}
+                />
+              )}
+              <input 
+                type="file" 
+                accept="image/*" 
+                onChange={handleLogoChange}
+                style={{ flex: 1 }}
+              />
+            </div>
+          </label>
+          
+          <label>Nama PKM
             <input
-              value={formData.fullName}
-              onChange={(e) => setFormData({ ...formData, fullName: e.target.value })}
+              value={formData.namaPkm}
+              onChange={(e) => setFormData({ ...formData, namaPkm: e.target.value })}
               required
             />
           </label>
-          <label>Username
-            <input value={profile.username} disabled />
-          </label>
-          <label>NIK
-            <input
-              value={formData.nik}
-              onChange={(e) => setFormData({ ...formData, nik: e.target.value })}
+          
+          <label className="wide">Alamat PKM
+            <textarea
+              value={formData.alamatPkm}
+              onChange={(e) => setFormData({ ...formData, alamatPkm: e.target.value })}
+              rows={3}
               required
-              inputMode="numeric"
             />
           </label>
+          
           <label>No. Telepon
             <input
-              value={formData.phone}
-              onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
+              value={formData.noTelepon}
+              onChange={(e) => setFormData({ ...formData, noTelepon: e.target.value })}
               required
               inputMode="tel"
             />
           </label>
-          <label>Email
+          
+          <label>Penanggung Jawab/Kesling
             <input
-              type="email"
-              value={formData.email}
-              onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+              value={formData.penanggungJawab}
+              onChange={(e) => setFormData({ ...formData, penanggungJawab: e.target.value })}
               required
             />
           </label>
-          <label>Role
-            <input value={profile.role === 'super_admin' ? 'Super Admin' : 'Kader'} disabled />
+          
+          <label>Website
+            <input
+              type="url"
+              value={formData.website}
+              onChange={(e) => setFormData({ ...formData, website: e.target.value })}
+              placeholder="https://"
+            />
           </label>
-          {profile.kelurahanId && (
-            <label>Kelurahan
-              <input value={kelurahan.find(k => k.id === profile.kelurahanId)?.name || '-'} disabled />
-            </label>
-          )}
-          {profile.rwId && (
-            <label>RW
-              <input value={`RW ${rw.find(r => r.id === profile.rwId)?.name || '-'}`} disabled />
-            </label>
-          )}
-          {profile.rtId && (
-            <label>RT
-              <input value={`RT ${rt.find(r => r.id === profile.rtId)?.name || '-'}`} disabled />
-            </label>
-          )}
-          <label>Status Akun
-            <input value={profile.isActive ? 'Aktif' : 'Nonaktif'} disabled />
+          
+          <label>Instagram
+            <input
+              value={formData.instagram}
+              onChange={(e) => setFormData({ ...formData, instagram: e.target.value })}
+              placeholder="@username"
+            />
+          </label>
+          
+          <label>Facebook
+            <input
+              value={formData.facebook}
+              onChange={(e) => setFormData({ ...formData, facebook: e.target.value })}
+              placeholder="Page name"
+            />
+          </label>
+          
+          <label>Twitter
+            <input
+              value={formData.twitter}
+              onChange={(e) => setFormData({ ...formData, twitter: e.target.value })}
+              placeholder="@username"
+            />
           </label>
         </div>
 

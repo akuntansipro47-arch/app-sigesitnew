@@ -1140,15 +1140,36 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
                     <h3 style={{ marginBottom: '12px', textTransform: 'capitalize' }}>{pillar.replace('_', ' ')}</h3>
                     {questions.map(q => {
                       const tempFamilyCardId = fc.id || `temp-${index}`
+                      const isSingleChoice = pillar === 'jamban' || pillar === 'sumber_air'
                       return (
                         <div key={q.code} style={{ marginBottom: '8px' }}>
                           <label style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                             <input
-                              type="checkbox"
+                              type={isSingleChoice ? 'radio' : 'checkbox'}
+                              name={`${pillar}-${tempFamilyCardId}`}
                               checked={questionnaireResponses.find(qr => 
                                 qr.familyCardId === tempFamilyCardId && qr.pillar === pillar && qr.questionCode === q.code
                               )?.answer || false}
-                              onChange={(e) => handleQuestionnaireChange(pillar, q.code, e.target.checked)}
+                              onChange={(e) => {
+                                if (isSingleChoice) {
+                                  // For radio buttons: clear all other answers in this pillar
+                                  setQuestionnaireResponses(prev => {
+                                    const filtered = prev.filter(qr => 
+                                      !(qr.familyCardId === tempFamilyCardId && qr.pillar === pillar)
+                                    )
+                                    return [...filtered, {
+                                      id: '',
+                                      familyCardId: tempFamilyCardId,
+                                      pillar,
+                                      questionCode: q.code,
+                                      answer: true
+                                    }]
+                                  })
+                                } else {
+                                  // For checkboxes: toggle as before
+                                  handleQuestionnaireChange(pillar, q.code, e.target.checked)
+                                }
+                              }}
                             />
                             {q.text}
                           </label>

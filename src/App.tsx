@@ -1573,21 +1573,90 @@ function LokasiPage({ kelurahan, rw, rt }: { kelurahan: Region[]; rw: Region[]; 
       <button className="primary" onClick={() => openForm()} type="button">+ Tambah Lokasi</button>
     </div>
 
-    {formOpen && <form className="region-form" onSubmit={save}>
-      <strong>{editing ? 'Edit' : 'Tambah'} Lokasi</strong>
-      {error && <div className="auth-error">{error}</div>}
-      <div className="region-form-fields">
-        <label>Nama Lokasi<input defaultValue={editing?.name} name="name" required /></label>
-        <label>Kode Lokasi<input defaultValue={editing?.code} name="code" /></label>
-        <label>Alamat<textarea defaultValue={editing?.address} name="address" rows={2} /></label>
-        <label>Kelurahan<select name="kelurahanId" onChange={(event) => { setSelectedKelurahanId(event.target.value); setSelectedRwId(''); setSelectedRtId('') }} value={selectedKelurahanId}><option value="">Pilih kelurahan</option>{kelurahan.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
-        <label>RW<select disabled={!selectedKelurahanId} name="rwId" onChange={(event) => setSelectedRwId(event.target.value)} value={selectedRwId}><option value="">Pilih RW</option>{rwOptions.map((item) => <option key={item.id} value={item.id}>RW {item.name}</option>)}</select></label>
-        <label>RT<select defaultValue={editing?.rtId ?? ''} disabled={!selectedRwId} name="rtId" onChange={(event) => setSelectedRtId(event.target.value)} value={selectedRtId}><option value="">Pilih RT</option>{rtOptions.map((item) => <option key={item.id} value={item.id}>RT {item.name}</option>)}</select></label>
-        <label>Latitude<input type="number" step="any" defaultValue={editing?.latitude} name="latitude" /></label>
-        <label>Longitude<input type="number" step="any" defaultValue={editing?.longitude} name="longitude" /></label>
-        <label className="wide">Deskripsi<textarea defaultValue={editing?.description} name="description" rows={3} /></label>
+    {formOpen && <form className="entry-form" onSubmit={save}>
+      <div className="page-heading">
+        <div>
+          <p className="eyebrow">DATA MASTER</p>
+          <h1>{editing ? 'Edit' : 'Tambah'} Lokasi</h1>
+          <p>Lengkapi data lokasi untuk pemeriksaan air dan udara.</p>
+        </div>
+        <button className="primary" disabled={submitting} type="submit">{submitting ? 'Menyimpan...' : 'Simpan'}</button>
       </div>
-      <div className="form-actions"><button className="secondary" onClick={() => setFormOpen(false)} type="button">Batal</button><button className="primary" disabled={submitting} type="submit">{submitting ? 'Menyimpan…' : 'Simpan'}</button></div>
+      {error && <div className="error-message">{error}</div>}
+
+      <section className="form-section">
+        <h2>Informasi Dasar</h2>
+        <div className="form-grid">
+          <label>Nama Lokasi *
+            <input defaultValue={editing?.name} name="name" placeholder="Masukkan nama lokasi" required />
+          </label>
+          <label>Kode Lokasi
+            <input defaultValue={editing?.code} name="code" placeholder="Kode unik lokasi (opsional)" />
+          </label>
+        </div>
+      </section>
+
+      <section className="form-section">
+        <h2>Alamat</h2>
+        <div className="form-grid">
+          <label className="wide">Alamat Lengkap
+            <textarea defaultValue={editing?.address} name="address" rows={2} placeholder="Masukkan alamat lengkap lokasi" />
+          </label>
+        </div>
+      </section>
+
+      <section className="form-section">
+        <h2>Wilayah</h2>
+        <div className="form-grid">
+          <label>Kelurahan *
+            <select name="kelurahanId" onChange={(event) => { setSelectedKelurahanId(event.target.value); setSelectedRwId(''); setSelectedRtId('') }} value={selectedKelurahanId} required>
+              <option value="">Pilih kelurahan</option>
+              {kelurahan.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+            </select>
+          </label>
+          <label>RW *
+            <select disabled={!selectedKelurahanId} name="rwId" onChange={(event) => setSelectedRwId(event.target.value)} value={selectedRwId} required>
+              <option value="">Pilih RW</option>
+              {rwOptions.map((item) => <option key={item.id} value={item.id}>RW {item.name}</option>)}
+            </select>
+          </label>
+          <label>RT *
+            <select disabled={!selectedRwId} name="rtId" onChange={(event) => setSelectedRtId(event.target.value)} value={selectedRtId} required>
+              <option value="">Pilih RT</option>
+              {rtOptions.map((item) => <option key={item.id} value={item.id}>RT {item.name}</option>)}
+            </select>
+          </label>
+        </div>
+      </section>
+
+      <section className="form-section">
+        <h2>Koordinat GPS</h2>
+        <div className="form-grid">
+          <label>Latitude
+            <input type="number" step="any" defaultValue={editing?.latitude} name="latitude" placeholder="-6.917464" />
+          </label>
+          <label>Longitude
+            <input type="number" step="any" defaultValue={editing?.longitude} name="longitude" placeholder="107.619123" />
+          </label>
+        </div>
+        <small style={{ display: 'block', marginTop: '8px', color: 'var(--muted)' }}>
+          Koordinat opsional. Gunakan format desimal (contoh: -6.917464, 107.619123)
+        </small>
+      </section>
+
+      <section className="form-section">
+        <h2>Deskripsi</h2>
+        <div className="form-grid">
+          <label className="wide">Deskripsi Lokasi
+            <textarea defaultValue={editing?.description} name="description" rows={3} placeholder="Deskripsi tambahan tentang lokasi (opsional)" />
+          </label>
+        </div>
+      </section>
+
+      <div className="form-actions">
+        <button className="secondary" onClick={() => setFormOpen(false)} type="button">Batal</button>
+        <button className="primary" disabled={submitting} type="submit">{submitting ? 'Menyimpan...' : 'Simpan'}</button>
+      </div>
     </form>}
 
     <div className="region-list">

@@ -1493,13 +1493,45 @@ function LokasiPage({ kelurahan, rw, rt }: { kelurahan: Region[]; rw: Region[]; 
     </form>}
 
     <div className="region-list">
-      {loading ? <div className="empty-state"><span>♙</span><h2>Memuat data lokasi…</h2></div> : locations.length === 0 ? <div className="empty-state"><span>♙</span><h2>Belum ada lokasi</h2><p>Tambahkan lokasi untuk mulai melakukan pemeriksaan.</p></div> : locations.map((location) => <article className="region-row" key={location.id}>
-        <div><strong>{location.name}</strong><small>{location.code || '-'} · {location.address || '-'} · {kelurahan.find(k => k.id === location.kelurahanId)?.name || '-'}</small></div>
-        <div className="row-actions">
-          <button className="edit-button" onClick={() => openForm(location)} type="button">Edit</button>
-          <button className="delete-button" onClick={() => remove(location)} type="button">Hapus</button>
-        </div>
-      </article>)}
+      {loading ? <div className="empty-state"><span>♙</span><h2>Memuat data lokasi…</h2></div> : locations.length === 0 ? <div className="empty-state"><span>♙</span><h2>Belum ada lokasi</h2><p>Tambahkan lokasi untuk mulai melakukan pemeriksaan.</p></div> : (
+        <table className="data-table">
+          <thead>
+            <tr>
+              <th>Nama Lokasi</th>
+              <th>Kode</th>
+              <th>Alamat</th>
+              <th>Wilayah</th>
+              <th>Koordinat</th>
+              <th>Aksi</th>
+            </tr>
+          </thead>
+          <tbody>
+            {locations.map((location) => (
+              <tr key={location.id}>
+                <td><strong>{location.name}</strong></td>
+                <td>{location.code || '-'}</td>
+                <td>{location.address || '-'}</td>
+                <td>
+                  {kelurahan.find(k => k.id === location.kelurahanId)?.name || '-'}
+                  {location.rwId && ` · RW ${rw.find(r => r.id === location.rwId)?.name || '-'}`}
+                  {location.rtId && ` · RT ${rt.find(r => r.id === location.rtId)?.name || '-'}`}
+                </td>
+                <td>
+                  {location.latitude && location.longitude 
+                    ? `${location.latitude}, ${location.longitude}` 
+                    : '-'}
+                </td>
+                <td>
+                  <div className="row-actions">
+                    <button className="edit-button" onClick={() => openForm(location)} type="button">Edit</button>
+                    <button className="delete-button" onClick={() => remove(location)} type="button">Hapus</button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
     </div>
   </section>
 }
@@ -1777,21 +1809,41 @@ function UjiAirPage({ profile, locations }: { profile: UserProfile | null; locat
 
     {!formOpen && tests.length === 0 && <div className="empty-state"><span>💧</span><h2>Belum ada data uji air</h2><p>Klik tombol di atas untuk menambahkan hasil uji air baru.</p></div>}
 
-    {!formOpen && tests.length > 0 && <section className="entry-list">
-      {tests.map(test => (
-        <article className="entry-row" key={test.id}>
-          <div className="house-icon">💧</div>
-          <div className="entry-detail">
-            <strong>{locations.find(l => l.id === test.locationId)?.name || 'Unknown'}</strong>
-            <span>{test.testDate} · Suhu: {test.temperatureValue}{test.temperatureUnit} · pH: {test.phValue || '-'}</span>
-          </div>
-          <div className="entry-actions">
-            <button className="text-button" onClick={() => openForm(test)} type="button">Edit</button>
-            <button className="text-button" onClick={() => remove(test)} type="button">Hapus</button>
-          </div>
-        </article>
-      ))}
-    </section>}
+    {!formOpen && tests.length > 0 && (
+      <table className="data-table">
+        <thead>
+          <tr>
+            <th>Lokasi</th>
+            <th>Tanggal Uji</th>
+            <th>Suhu</th>
+            <th>pH</th>
+            <th>TDS</th>
+            <th>Kekeruhan</th>
+            <th>E-coli</th>
+            <th>Aksi</th>
+          </tr>
+        </thead>
+        <tbody>
+          {tests.map(test => (
+            <tr key={test.id}>
+              <td><strong>{locations.find(l => l.id === test.locationId)?.name || 'Unknown'}</strong></td>
+              <td>{test.testDate}</td>
+              <td>{test.temperatureValue}{test.temperatureUnit}</td>
+              <td>{test.phValue || '-'}</td>
+              <td>{test.tdsValue || '-'}</td>
+              <td>{test.turbidityValue || '-'}</td>
+              <td>{test.eColiValue || '-'}</td>
+              <td>
+                <div className="entry-actions">
+                  <button className="text-button" onClick={() => openForm(test)} type="button">Edit</button>
+                  <button className="text-button" onClick={() => remove(test)} type="button">Hapus</button>
+                </div>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    )}
   </section>
 }
 
@@ -2077,21 +2129,41 @@ function UjiUdaraPage({ profile, locations }: { profile: UserProfile | null; loc
 
     {!formOpen && tests.length === 0 && <div className="empty-state"><span>🌬️</span><h2>Belum ada data uji udara</h2><p>Klik tombol di atas untuk menambahkan hasil uji udara baru.</p></div>}
 
-    {!formOpen && tests.length > 0 && <section className="entry-list">
-      {tests.map(test => (
-        <article className="entry-row" key={test.id}>
-          <div className="house-icon">🌬️</div>
-          <div className="entry-detail">
-            <strong>{locations.find(l => l.id === test.locationId)?.name || 'Unknown'}</strong>
-            <span>{test.testDate} · Suhu: {test.temperature1}{test.temperatureUnit} · PM2.5: {test.pm25_1}</span>
-          </div>
-          <div className="entry-actions">
-            <button className="text-button" onClick={() => openForm(test)} type="button">Edit</button>
-            <button className="text-button" onClick={() => remove(test)} type="button">Hapus</button>
-          </div>
-        </article>
-      ))}
-    </section>}
+    {!formOpen && tests.length > 0 && (
+      <table className="data-table">
+        <thead>
+          <tr>
+            <th>Lokasi</th>
+            <th>Tanggal Uji</th>
+            <th>Suhu</th>
+            <th>Kelembapan</th>
+            <th>Kebisingan</th>
+            <th>PM 2.5</th>
+            <th>PM 10</th>
+            <th>Aksi</th>
+          </tr>
+        </thead>
+        <tbody>
+          {tests.map(test => (
+            <tr key={test.id}>
+              <td><strong>{locations.find(l => l.id === test.locationId)?.name || 'Unknown'}</strong></td>
+              <td>{test.testDate}</td>
+              <td>{test.temperature1}{test.temperatureUnit}</td>
+              <td>{test.humidity1 || '-'}</td>
+              <td>{test.noise1 || '-'}</td>
+              <td>{test.pm25_1 || '-'}</td>
+              <td>{test.pm10_1 || '-'}</td>
+              <td>
+                <div className="entry-actions">
+                  <button className="text-button" onClick={() => openForm(test)} type="button">Edit</button>
+                  <button className="text-button" onClick={() => remove(test)} type="button">Hapus</button>
+                </div>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    )}
   </section>
 }
 

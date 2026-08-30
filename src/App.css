@@ -58,3 +58,13 @@
 .entry-actions { display: flex; gap: 8px; }
 .entry-actions .text-button { padding: 6px 12px; border-radius: 6px; transition: all 0.2s ease; }
 .entry-actions .text-button:hover { background: #f1f5f9; }
+
+.data-table { width: 100%; border-collapse: collapse; background: var(--paper); border-radius: 8px; overflow: hidden; box-shadow: var(--shadow-sm); }
+.data-table thead { background: var(--mint); }
+.data-table th { padding: 12px 16px; text-align: left; font-size: 12px; font-weight: 700; color: var(--forest); border-bottom: 1px solid var(--line); }
+.data-table td { padding: 12px 16px; border-bottom: 1px solid var(--line); font-size: 13px; }
+.data-table tr:last-child td { border-bottom: none; }
+.data-table tr:hover { background: #f8fafc; }
+.data-table strong { color: var(--ink); }
+.data-table small { color: var(--muted); font-size: 11px; }
+.data-table .row-actions { display: flex; gap: 8px; }

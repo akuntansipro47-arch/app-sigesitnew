@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS pkm_info (
 );
 
 -- Trigger untuk updated_at
+DROP TRIGGER IF EXISTS update_pkm_info_updated_at ON pkm_info;
 CREATE TRIGGER update_pkm_info_updated_at BEFORE UPDATE ON pkm_info
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
@@ -52,14 +53,20 @@ CREATE POLICY "Authenticated delete for pkm logos"
 -- RLS untuk pkm_info
 ALTER TABLE pkm_info ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "PKM info is viewable by authenticated users" 
-  ON pkm_info FOR SELECT USING (auth.role() = 'authenticated');
-
-CREATE POLICY "PKM info can be updated by authenticated users" 
-  ON pkm_info FOR UPDATE USING (auth.role() = 'authenticated');
-
-CREATE POLICY "PKM info can be created by authenticated users" 
-  ON pkm_info FOR INSERT WITH CHECK (auth.role() = 'authenticated');
+DO $$
+BEGIN
+  DROP POLICY IF EXISTS "PKM info is viewable by authenticated users" ON pkm_info;
+  CREATE POLICY "PKM info is viewable by authenticated users" 
+    ON pkm_info FOR SELECT USING (auth.role() = 'authenticated');
+  
+  DROP POLICY IF EXISTS "PKM info can be updated by authenticated users" ON pkm_info;
+  CREATE POLICY "PKM info can be updated by authenticated users" 
+    ON pkm_info FOR UPDATE USING (auth.role() = 'authenticated');
+  
+  DROP POLICY IF EXISTS "PKM info can be created by authenticated users" ON pkm_info;
+  CREATE POLICY "PKM info can be created by authenticated users" 
+    ON pkm_info FOR INSERT WITH CHECK (auth.role() = 'authenticated');
+END $$;
 
 -- Insert default PKM info jika belum ada
 INSERT INTO pkm_info (nama_pkm, alamat_pkm, no_telepon, penanggung_jawab, website, instagram, facebook, twitter)

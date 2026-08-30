@@ -23,6 +23,7 @@ BEGIN
 END;
 $$ language 'plpgsql';
 
+DROP TRIGGER IF EXISTS update_locations_updated_at ON locations;
 CREATE TRIGGER update_locations_updated_at BEFORE UPDATE ON locations
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
@@ -61,6 +62,7 @@ CREATE TABLE IF NOT EXISTS water_quality_tests (
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
+DROP TRIGGER IF EXISTS update_water_quality_tests_updated_at ON water_quality_tests;
 CREATE TRIGGER update_water_quality_tests_updated_at BEFORE UPDATE ON water_quality_tests
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
@@ -106,6 +108,7 @@ CREATE TABLE IF NOT EXISTS air_quality_tests (
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
+DROP TRIGGER IF EXISTS update_air_quality_tests_updated_at ON air_quality_tests;
 CREATE TRIGGER update_air_quality_tests_updated_at BEFORE UPDATE ON air_quality_tests
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
@@ -122,6 +125,11 @@ ALTER TABLE water_quality_tests ENABLE ROW LEVEL SECURITY;
 ALTER TABLE air_quality_tests ENABLE ROW LEVEL SECURITY;
 
 -- Policy untuk locations
+DROP POLICY IF EXISTS "Locations are viewable by authenticated users" ON locations;
+DROP POLICY IF EXISTS "Locations can be created by authenticated users" ON locations;
+DROP POLICY IF EXISTS "Locations can be updated by authenticated users" ON locations;
+DROP POLICY IF EXISTS "Locations can be deleted by authenticated users" ON locations;
+
 CREATE POLICY "Locations are viewable by authenticated users" 
   ON locations FOR SELECT USING (auth.role() = 'authenticated');
 
@@ -135,6 +143,11 @@ CREATE POLICY "Locations can be deleted by authenticated users"
   ON locations FOR DELETE USING (auth.role() = 'authenticated');
 
 -- Policy untuk water_quality_tests
+DROP POLICY IF EXISTS "Water quality tests are viewable by authenticated users" ON water_quality_tests;
+DROP POLICY IF EXISTS "Water quality tests can be created by authenticated users" ON water_quality_tests;
+DROP POLICY IF EXISTS "Water quality tests can be updated by authenticated users" ON water_quality_tests;
+DROP POLICY IF EXISTS "Water quality tests can be deleted by authenticated users" ON water_quality_tests;
+
 CREATE POLICY "Water quality tests are viewable by authenticated users" 
   ON water_quality_tests FOR SELECT USING (auth.role() = 'authenticated');
 
@@ -148,6 +161,11 @@ CREATE POLICY "Water quality tests can be deleted by authenticated users"
   ON water_quality_tests FOR DELETE USING (auth.role() = 'authenticated');
 
 -- Policy untuk air_quality_tests
+DROP POLICY IF EXISTS "Air quality tests are viewable by authenticated users" ON air_quality_tests;
+DROP POLICY IF EXISTS "Air quality tests can be created by authenticated users" ON air_quality_tests;
+DROP POLICY IF EXISTS "Air quality tests can be updated by authenticated users" ON air_quality_tests;
+DROP POLICY IF EXISTS "Air quality tests can be deleted by authenticated users" ON air_quality_tests;
+
 CREATE POLICY "Air quality tests are viewable by authenticated users" 
   ON air_quality_tests FOR SELECT USING (auth.role() = 'authenticated');
 

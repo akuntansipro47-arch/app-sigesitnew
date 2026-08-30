@@ -2399,6 +2399,7 @@ function PenggunaPage({ kelurahan, rw, rt, currentUserId }: { kelurahan: Region[
   const [selectedKelurahanId, setSelectedKelurahanId] = useState('')
   const [selectedRwId, setSelectedRwId] = useState('')
   const [moduleAccess, setModuleAccess] = useState({ entry: true, wilayah: true, pengguna: false, lokasi: true, uji_air: true, uji_udara: true })
+  const [generatedPasswords, setGeneratedPasswords] = useState<Record<string, string>>({})
 
   async function loadUsers() {
     if (!supabase) {
@@ -2520,6 +2521,11 @@ function PenggunaPage({ kelurahan, rw, rt, currentUserId }: { kelurahan: Region[
     if (invokeError || resultError) { setError(resultError ?? functionError ?? 'Gagal menyimpan pengguna.'); return }
     
     if (!editing) {
+      // Store generated password for display in list
+      const { data: newUser } = await supabase.from('profiles').select('id').eq('username', username).single()
+      if (newUser) {
+        setGeneratedPasswords(prev => ({ ...prev, [newUser.id]: password }))
+      }
       // Show generated credentials
       alert(`User berhasil dibuat!\n\nUsername: ${username}\nPassword: ${password}\n\nSimpan credentials ini untuk user.`)
     }
@@ -2543,6 +2549,25 @@ function PenggunaPage({ kelurahan, rw, rt, currentUserId }: { kelurahan: Region[
     const { error: invokeError } = await supabase.functions.invoke('admin-users', { body: { action: 'delete', id: user.id } })
     if (invokeError) { window.alert(await getFunctionErrorMessage(invokeError) ?? 'Gagal menghapus pengguna.'); return }
     void loadUsers()
+  }
+
+  async function regeneratePassword(user: UserProfile) {
+    if (!supabase) return
+    if (!window.confirm(`Generate password baru untuk ${user.fullName}? Password lama akan diganti.`)) return
+    
+    const newPassword = generatePassword()
+    const { error: invokeError } = await supabase.functions.invoke('admin-users', { 
+      body: { action: 'update', id: user.id, password: newPassword } 
+    })
+    
+    if (invokeError) { 
+      window.alert(await getFunctionErrorMessage(invokeError) ?? 'Gagal generate password.'); 
+      return 
+    }
+    
+    // Store and show new password
+    setGeneratedPasswords(prev => ({ ...prev, [user.id]: newPassword }))
+    alert(`Password baru berhasil digenerate!\n\nUsername: ${user.username}\nPassword: ${newPassword}\n\nSimpan credentials ini untuk user.`)
   }
 
   const rwOptions = rw.filter((item) => item.kelurahanId === selectedKelurahanId)
@@ -2574,7 +2599,7 @@ function PenggunaPage({ kelurahan, rw, rt, currentUserId }: { kelurahan: Region[
         </div>}
         {!editing && <div className="generated-info">
           <p><strong>Username:</strong> Akan digenerate otomatis (5 digit terakhir NIK + 3 huruf unik)</p>
-          <p><strong>Password:</strong> Akan digenerate otomatis (12 karakter)</p>
+          <p><strong>Password:</strong> Akan digenerate otomatis (12 karakter) dan akan ditampilkan di daftar pengguna setelah user dibuat</p>
         </div>}
       </div>
       <div className="form-actions"><button className="secondary" onClick={() => setFormOpen(false)} type="button">Batal</button><button className="primary" disabled={submitting} type="submit">{submitting ? 'Menyimpan…' : 'Simpan'}</button></div>
@@ -2582,9 +2607,19 @@ function PenggunaPage({ kelurahan, rw, rt, currentUserId }: { kelurahan: Region[
     <div className="region-list">
       {error && <div className="error-message" style={{ marginBottom: '16px' }}>{error}</div>}
       {loading ? <div className="empty-state"><span>♙</span><h2>Memuat data pengguna…</h2></div> : users.length === 0 ? <div className="empty-state"><span>♙</span><h2>Belum ada pengguna</h2><p>Tambahkan akun kader atau admin untuk mulai mengelola akses.</p></div> : users.map((user) => <article className="region-row" key={user.id}>
-        <div><strong>{user.fullName}</strong><small>{user.username} · {user.email} · {user.role === 'super_admin' ? 'Super Admin' : 'Kader'} {!user.isActive && '· Nonaktif'}</small></div>
+        <div>
+          <strong>{user.fullName}</strong>
+          <small>
+            Username: {user.username} · 
+            {generatedPasswords[user.id] && ` Password: ${generatedPasswords[user.id]} · `}
+            {user.email} · 
+            {user.role === 'super_admin' ? 'Super Admin' : 'Kader'}
+            {!user.isActive && ' · Nonaktif'}
+          </small>
+        </div>
         <div className="row-actions">
           <button className="edit-button" onClick={() => openForm(user)} type="button">Edit</button>
+          <button className="secondary" onClick={() => regeneratePassword(user)} type="button">Password</button>
           <button className="secondary" onClick={() => toggleActive(user)} type="button">{user.isActive ? 'Nonaktifkan' : 'Aktifkan'}</button>
           <button className="delete-button" onClick={() => removeUser(user)} type="button">Hapus</button>
         </div>

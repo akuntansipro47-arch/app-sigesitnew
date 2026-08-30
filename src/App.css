@@ -49,6 +49,10 @@
 .kk-card { background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 24px; margin-bottom: 20px; box-shadow: var(--shadow-sm); transition: all 0.3s ease; }
 .kk-card:hover { box-shadow: var(--shadow-md); }
 
+.inline-fields { display: grid; grid-template-columns: 1fr 1fr 1fr auto; gap: 8px; }
+.inline-fields input, .inline-fields select { width: 100%; }
+.inline-fields input:last-child, .inline-fields select:last-child { min-width: 60px; }
+
 .error-message { margin: 16px 0; padding: 12px 16px; border-radius: 10px; background: linear-gradient(135deg, #fef2f2 0%, #fee2e2 100%); color: #dc2626; font-size: 14px; border: 1px solid #fecaca; }
 
 .entry-actions { display: flex; gap: 8px; }

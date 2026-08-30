@@ -378,7 +378,7 @@ function App() {
       if (!supabase || !session) { setProfile(null); return }
       // Retry profile loading with delay if initial load fails
       for (let i = 0; i < 3; i++) {
-        const { data, error } = await supabase.from('pkm_profiles').select('*').eq('id', session.user.id).single()
+        const { data, error } = await supabase.from('profiles').select('*').eq('id', session.user.id).single()
         console.log('Load profile result:', { data, error: error?.message, userId: session.user.id, attempt: i + 1 })
         if (!error && data) {
           setProfile(mapProfileRow(data as ProfileRow))
@@ -2144,8 +2144,8 @@ function PenggunaPage({ kelurahan, rw, rt, currentUserId }: { kelurahan: Region[
     }
     setLoading(true)
     try {
-      console.log('Loading users from pkm_profiles...')
-      const { data, error: loadError } = await supabase.from('pkm_profiles').select('*').order('full_name')
+      console.log('Loading users from profiles...')
+      const { data, error: loadError } = await supabase.from('profiles').select('*').order('full_name')
       console.log('Load users result:', { data, error: loadError?.message, dataLength: data?.length })
       
       if (loadError) {
@@ -2211,7 +2211,7 @@ function PenggunaPage({ kelurahan, rw, rt, currentUserId }: { kelurahan: Region[
     
     // NIK uniqueness validation
     if (!editing && nik) {
-      const { data: existingUser } = await supabase.from('pkm_profiles').select('id').eq('nik', nik).single()
+      const { data: existingUser } = await supabase.from('profiles').select('id').eq('nik', nik).single()
       if (existingUser) {
         setError('NIK sudah terdaftar. Gunakan NIK yang berbeda.')
         return

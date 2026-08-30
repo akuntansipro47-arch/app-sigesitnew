@@ -208,7 +208,7 @@ function App() {
         username: session.user.email?.split('@')[0] || 'user',
         nik: '',
         phone: '',
-        email: session.user.email,
+        email: session.user.email || null,
         role: 'kader',
         isActive: true,
         moduleAccess: { entry: true, wilayah: true, pengguna: false }

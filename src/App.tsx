@@ -1907,7 +1907,7 @@ function UjiAirPage({ profile, locations }: { profile: UserProfile | null; locat
     void loadTests()
   }
 
-  if (loading) return <main className="auth-shell"><p className="auth-loading">Memuat data uji air…</p></main>
+  if (loading) return <section className="master-page"><div className="empty-state"><span>💧</span><h2>Memuat data uji air…</h2></div></section>
 
   return <section className="master-page">
     <div className="page-heading">
@@ -1915,7 +1915,7 @@ function UjiAirPage({ profile, locations }: { profile: UserProfile | null; locat
       <button className="primary" onClick={() => openForm()} type="button">+ Tambah Uji Air</button>
     </div>
 
-    {formOpen && <form className="entry-form" onSubmit={save}>
+    {formOpen && <form className="entry-form compact-form" onSubmit={save}>
       <div className="page-heading">
         <div>
           <p className="eyebrow">PEMERIKSAAN</p>
@@ -1935,14 +1935,14 @@ function UjiAirPage({ profile, locations }: { profile: UserProfile | null; locat
               {locations.map(loc => <option key={loc.id} value={loc.id}>{loc.name}</option>)}
             </select>
           </label>
-          <label>Tanggal Uji
+          <label>Tanggal
             <input type="date" value={formData.testDate} onChange={(e) => setFormData({ ...formData, testDate: e.target.value })} required />
           </label>
         </div>
       </section>
 
       <section className="form-section">
-        <h2>A. Parameter Fisik</h2>
+        <h2>Fisik</h2>
         <div className="form-grid">
           <label>Suhu
             <div className="inline-fields">
@@ -1963,9 +1963,9 @@ function UjiAirPage({ profile, locations }: { profile: UserProfile | null; locat
       </section>
 
       <section className="form-section">
-        <h2>B. Parameter Kimia</h2>
+        <h2>Kimia</h2>
         <div className="form-grid">
-          <label>pH (0-14)<input type="number" step="any" value={formData.phValue} onChange={(e) => setFormData({ ...formData, phValue: e.target.value })} placeholder="7" /></label>
+          <label>pH<input type="number" step="any" value={formData.phValue} onChange={(e) => setFormData({ ...formData, phValue: e.target.value })} placeholder="7" /></label>
           <label>Nitrit (mg/L)<input type="number" step="any" value={formData.nitriteValue} onChange={(e) => setFormData({ ...formData, nitriteValue: e.target.value })} placeholder="0" /></label>
           <label>Nitrat (mg/L)<input type="number" step="any" value={formData.nitrateValue} onChange={(e) => setFormData({ ...formData, nitrateValue: e.target.value })} placeholder="0" /></label>
           <label>Chromium (mg/L)<input type="number" step="any" value={formData.chromiumValue} onChange={(e) => setFormData({ ...formData, chromiumValue: e.target.value })} placeholder="0" /></label>
@@ -1978,7 +1978,7 @@ function UjiAirPage({ profile, locations }: { profile: UserProfile | null; locat
       </section>
 
       <section className="form-section">
-        <h2>C. Parameter Mikrobiologi</h2>
+        <h2>Mikrobiologi</h2>
         <div className="form-grid">
           <label>E-coli (MPN/100ml)<input type="number" step="any" value={formData.eColiValue} onChange={(e) => setFormData({ ...formData, eColiValue: e.target.value })} placeholder="0" /></label>
           <label>Coliform (MPN/100ml)<input type="number" step="any" value={formData.coliformValue} onChange={(e) => setFormData({ ...formData, coliformValue: e.target.value })} placeholder="0" /></label>
@@ -1987,7 +1987,7 @@ function UjiAirPage({ profile, locations }: { profile: UserProfile | null; locat
 
       <section className="form-section">
         <h2>Catatan</h2>
-        <label className="wide">Catatan Tambahan<textarea value={formData.notes} onChange={(e) => setFormData({ ...formData, notes: e.target.value })} rows={3} placeholder="Catatan tambahan..." /></label>
+        <label className="wide">Catatan<textarea value={formData.notes} onChange={(e) => setFormData({ ...formData, notes: e.target.value })} rows={2} placeholder="Catatan..." /></label>
       </section>
 
       <div style={{ display: 'flex', gap: '8px', marginTop: '16px' }}>
@@ -2212,7 +2212,7 @@ function UjiUdaraPage({ profile, locations }: { profile: UserProfile | null; loc
     void loadTests()
   }
 
-  if (loading) return <main className="auth-shell"><p className="auth-loading">Memuat data uji udara…</p></main>
+  if (loading) return <section className="master-page"><div className="empty-state"><span>🌬️</span><h2>Memuat data uji udara…</h2></div></section>
 
   return <section className="master-page">
     <div className="page-heading">
@@ -2220,7 +2220,7 @@ function UjiUdaraPage({ profile, locations }: { profile: UserProfile | null; loc
       <button className="primary" onClick={() => openForm()} type="button">+ Tambah Uji Udara</button>
     </div>
 
-    {formOpen && <form className="entry-form" onSubmit={save}>
+    {formOpen && <form className="entry-form compact-form" onSubmit={save}>
       <div className="page-heading">
         <div>
           <p className="eyebrow">PEMERIKSAAN</p>
@@ -2240,14 +2240,14 @@ function UjiUdaraPage({ profile, locations }: { profile: UserProfile | null; loc
               {locations.map(loc => <option key={loc.id} value={loc.id}>{loc.name}</option>)}
             </select>
           </label>
-          <label>Tanggal Uji
+          <label>Tanggal
             <input type="date" value={formData.testDate} onChange={(e) => setFormData({ ...formData, testDate: e.target.value })} required />
           </label>
         </div>
       </section>
 
       <section className="form-section">
-        <h2>Parameter Kualitas Udara</h2>
+        <h2>Parameter Udara</h2>
         <div className="form-grid">
           <label>Suhu (°C)
             <div className="inline-fields">
@@ -2309,7 +2309,7 @@ function UjiUdaraPage({ profile, locations }: { profile: UserProfile | null; loc
 
       <section className="form-section">
         <h2>Catatan</h2>
-        <label className="wide">Catatan Tambahan<textarea value={formData.notes} onChange={(e) => setFormData({ ...formData, notes: e.target.value })} rows={3} placeholder="Catatan tambahan..." /></label>
+        <label className="wide">Catatan<textarea value={formData.notes} onChange={(e) => setFormData({ ...formData, notes: e.target.value })} rows={2} placeholder="Catatan..." /></label>
       </section>
 
       <div style={{ display: 'flex', gap: '8px', marginTop: '16px' }}>

@@ -1942,46 +1942,46 @@ function UjiAirPage({ profile, locations }: { profile: UserProfile | null; locat
       </section>
 
       <section className="form-section">
-        <h2>A. Pemeriksaan Parameter Fisik</h2>
+        <h2>A. Parameter Fisik</h2>
         <div className="form-grid">
           <label>Suhu
             <div className="inline-fields">
               <input type="number" step="any" value={formData.temperatureValue} onChange={(e) => setFormData({ ...formData, temperatureValue: e.target.value })} placeholder="Nilai" />
               <select value={formData.temperatureUnit} onChange={(e) => setFormData({ ...formData, temperatureUnit: e.target.value as 'K' | 'C' | 'F' | 'R' })}>
-                <option value="K">Kelvin (K)</option>
-                <option value="C">Celcius (C)</option>
-                <option value="F">Fahrenheit (F)</option>
-                <option value="R">Reamur (R)</option>
+                <option value="K">K</option>
+                <option value="C">C</option>
+                <option value="F">F</option>
+                <option value="R">R</option>
               </select>
             </div>
           </label>
-          <label>TDS<input type="number" step="any" value={formData.tdsValue} onChange={(e) => setFormData({ ...formData, tdsValue: e.target.value })} placeholder="mg/L" /></label>
-          <label>Kekeruhan<input type="number" step="any" value={formData.turbidityValue} onChange={(e) => setFormData({ ...formData, turbidityValue: e.target.value })} placeholder="NTU" /></label>
-          <label>Warna<input value={formData.colorValue} onChange={(e) => setFormData({ ...formData, colorValue: e.target.value })} placeholder="TCU" /></label>
-          <label>Bau<input value={formData.odorValue} onChange={(e) => setFormData({ ...formData, odorValue: e.target.value })} placeholder="Deskripsi bau" /></label>
+          <label>TDS (mg/L)<input type="number" step="any" value={formData.tdsValue} onChange={(e) => setFormData({ ...formData, tdsValue: e.target.value })} placeholder="0" /></label>
+          <label>Kekeruhan (NTU)<input type="number" step="any" value={formData.turbidityValue} onChange={(e) => setFormData({ ...formData, turbidityValue: e.target.value })} placeholder="0" /></label>
+          <label>Warna (TCU)<input value={formData.colorValue} onChange={(e) => setFormData({ ...formData, colorValue: e.target.value })} placeholder="0" /></label>
+          <label>Bau<input value={formData.odorValue} onChange={(e) => setFormData({ ...formData, odorValue: e.target.value })} placeholder="Tidak berbau" /></label>
         </div>
       </section>
 
       <section className="form-section">
-        <h2>B. Pemeriksaan Kimia</h2>
+        <h2>B. Parameter Kimia</h2>
         <div className="form-grid">
-          <label>pH<input type="number" step="any" value={formData.phValue} onChange={(e) => setFormData({ ...formData, phValue: e.target.value })} placeholder="0-14" /></label>
-          <label>Nitrit (N'a)<input type="number" step="any" value={formData.nitriteValue} onChange={(e) => setFormData({ ...formData, nitriteValue: e.target.value })} placeholder="mg/L" /></label>
-          <label>Nitrat (Ni)<input type="number" step="any" value={formData.nitrateValue} onChange={(e) => setFormData({ ...formData, nitrateValue: e.target.value })} placeholder="mg/L" /></label>
-          <label>Chromium (Cr)<input type="number" step="any" value={formData.chromiumValue} onChange={(e) => setFormData({ ...formData, chromiumValue: e.target.value })} placeholder="mg/L" /></label>
-          <label>Besi (Fe)<input type="number" step="any" value={formData.ironValue} onChange={(e) => setFormData({ ...formData, ironValue: e.target.value })} placeholder="mg/L" /></label>
-          <label>Mangan (Mg)<input type="number" step="any" value={formData.manganeseValue} onChange={(e) => setFormData({ ...formData, manganeseValue: e.target.value })} placeholder="mg/L" /></label>
-          <label>Chlorine<input type="number" step="any" value={formData.chlorineValue} onChange={(e) => setFormData({ ...formData, chlorineValue: e.target.value })} placeholder="mg/L" /></label>
-          <label>Fluorida (Fl)<input type="number" step="any" value={formData.fluorideValue} onChange={(e) => setFormData({ ...formData, fluorideValue: e.target.value })} placeholder="mg/L" /></label>
-          <label>Aluminium (Al)<input type="number" step="any" value={formData.aluminumValue} onChange={(e) => setFormData({ ...formData, aluminumValue: e.target.value })} placeholder="mg/L" /></label>
+          <label>pH (0-14)<input type="number" step="any" value={formData.phValue} onChange={(e) => setFormData({ ...formData, phValue: e.target.value })} placeholder="7" /></label>
+          <label>Nitrit (mg/L)<input type="number" step="any" value={formData.nitriteValue} onChange={(e) => setFormData({ ...formData, nitriteValue: e.target.value })} placeholder="0" /></label>
+          <label>Nitrat (mg/L)<input type="number" step="any" value={formData.nitrateValue} onChange={(e) => setFormData({ ...formData, nitrateValue: e.target.value })} placeholder="0" /></label>
+          <label>Chromium (mg/L)<input type="number" step="any" value={formData.chromiumValue} onChange={(e) => setFormData({ ...formData, chromiumValue: e.target.value })} placeholder="0" /></label>
+          <label>Besi (mg/L)<input type="number" step="any" value={formData.ironValue} onChange={(e) => setFormData({ ...formData, ironValue: e.target.value })} placeholder="0" /></label>
+          <label>Mangan (mg/L)<input type="number" step="any" value={formData.manganeseValue} onChange={(e) => setFormData({ ...formData, manganeseValue: e.target.value })} placeholder="0" /></label>
+          <label>Chlorine (mg/L)<input type="number" step="any" value={formData.chlorineValue} onChange={(e) => setFormData({ ...formData, chlorineValue: e.target.value })} placeholder="0" /></label>
+          <label>Fluorida (mg/L)<input type="number" step="any" value={formData.fluorideValue} onChange={(e) => setFormData({ ...formData, fluorideValue: e.target.value })} placeholder="0" /></label>
+          <label>Aluminium (mg/L)<input type="number" step="any" value={formData.aluminumValue} onChange={(e) => setFormData({ ...formData, aluminumValue: e.target.value })} placeholder="0" /></label>
         </div>
       </section>
 
       <section className="form-section">
-        <h2>C. Pemeriksaan Mikrobiologi</h2>
+        <h2>C. Parameter Mikrobiologi</h2>
         <div className="form-grid">
-          <label>E-coli<input type="number" step="any" value={formData.eColiValue} onChange={(e) => setFormData({ ...formData, eColiValue: e.target.value })} placeholder="MPN/100ml" /></label>
-          <label>Coliform<input type="number" step="any" value={formData.coliformValue} onChange={(e) => setFormData({ ...formData, coliformValue: e.target.value })} placeholder="MPN/100ml" /></label>
+          <label>E-coli (MPN/100ml)<input type="number" step="any" value={formData.eColiValue} onChange={(e) => setFormData({ ...formData, eColiValue: e.target.value })} placeholder="0" /></label>
+          <label>Coliform (MPN/100ml)<input type="number" step="any" value={formData.coliformValue} onChange={(e) => setFormData({ ...formData, coliformValue: e.target.value })} placeholder="0" /></label>
         </div>
       </section>
 
@@ -1998,39 +1998,41 @@ function UjiAirPage({ profile, locations }: { profile: UserProfile | null; locat
     {!formOpen && tests.length === 0 && <div className="empty-state"><span>💧</span><h2>Belum ada data uji air</h2><p>Klik tombol di atas untuk menambahkan hasil uji air baru.</p></div>}
 
     {!formOpen && tests.length > 0 && (
-      <table className="data-table">
-        <thead>
-          <tr>
-            <th>Lokasi</th>
-            <th>Tanggal Uji</th>
-            <th>Suhu</th>
-            <th>pH</th>
-            <th>TDS</th>
-            <th>Kekeruhan</th>
-            <th>E-coli</th>
-            <th>Aksi</th>
-          </tr>
-        </thead>
-        <tbody>
-          {tests.map(test => (
-            <tr key={test.id}>
-              <td><strong>{locations.find(l => l.id === test.locationId)?.name || 'Unknown'}</strong></td>
-              <td>{test.testDate}</td>
-              <td>{test.temperatureValue}{test.temperatureUnit}</td>
-              <td>{test.phValue || '-'}</td>
-              <td>{test.tdsValue || '-'}</td>
-              <td>{test.turbidityValue || '-'}</td>
-              <td>{test.eColiValue || '-'}</td>
-              <td>
-                <div className="entry-actions">
-                  <button className="text-button" onClick={() => openForm(test)} type="button">Edit</button>
-                  <button className="text-button" onClick={() => remove(test)} type="button">Hapus</button>
-                </div>
-              </td>
+      <div className="data-table-wrapper">
+        <table className="data-table">
+          <thead>
+            <tr>
+              <th>Lokasi</th>
+              <th>Tanggal Uji</th>
+              <th>Suhu</th>
+              <th>pH</th>
+              <th>TDS</th>
+              <th>Kekeruhan</th>
+              <th>E-coli</th>
+              <th>Aksi</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {tests.map(test => (
+              <tr key={test.id}>
+                <td><strong>{locations.find(l => l.id === test.locationId)?.name || 'Unknown'}</strong></td>
+                <td>{test.testDate}</td>
+                <td>{test.temperatureValue}{test.temperatureUnit}</td>
+                <td>{test.phValue || '-'}</td>
+                <td>{test.tdsValue || '-'}</td>
+                <td>{test.turbidityValue || '-'}</td>
+                <td>{test.eColiValue || '-'}</td>
+                <td>
+                  <div className="entry-actions">
+                    <button className="text-button" onClick={() => openForm(test)} type="button">Edit</button>
+                    <button className="text-button" onClick={() => remove(test)} type="button">Hapus</button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     )}
   </section>
 }
@@ -2247,11 +2249,11 @@ function UjiUdaraPage({ profile, locations }: { profile: UserProfile | null; loc
       <section className="form-section">
         <h2>Parameter Kualitas Udara</h2>
         <div className="form-grid">
-          <label>Suhu
+          <label>Suhu (°C)
             <div className="inline-fields">
-              <input type="number" step="any" value={formData.temperature1} onChange={(e) => setFormData({ ...formData, temperature1: e.target.value })} placeholder="Pengukuran 1" />
-              <input type="number" step="any" value={formData.temperature2} onChange={(e) => setFormData({ ...formData, temperature2: e.target.value })} placeholder="Pengukuran 2" />
-              <input type="number" step="any" value={formData.temperature3} onChange={(e) => setFormData({ ...formData, temperature3: e.target.value })} placeholder="Pengukuran 3" />
+              <input type="number" step="any" value={formData.temperature1} onChange={(e) => setFormData({ ...formData, temperature1: e.target.value })} placeholder="1" />
+              <input type="number" step="any" value={formData.temperature2} onChange={(e) => setFormData({ ...formData, temperature2: e.target.value })} placeholder="2" />
+              <input type="number" step="any" value={formData.temperature3} onChange={(e) => setFormData({ ...formData, temperature3: e.target.value })} placeholder="3" />
               <select value={formData.temperatureUnit} onChange={(e) => setFormData({ ...formData, temperatureUnit: e.target.value as 'K' | 'C' | 'F' | 'R' })}>
                 <option value="K">K</option>
                 <option value="C">C</option>
@@ -2260,46 +2262,46 @@ function UjiUdaraPage({ profile, locations }: { profile: UserProfile | null; loc
               </select>
             </div>
           </label>
-          <label>Kelembapan
+          <label>Kelembapan (%)
             <div className="inline-fields">
-              <input type="number" step="any" value={formData.humidity1} onChange={(e) => setFormData({ ...formData, humidity1: e.target.value })} placeholder="Pengukuran 1" />
-              <input type="number" step="any" value={formData.humidity2} onChange={(e) => setFormData({ ...formData, humidity2: e.target.value })} placeholder="Pengukuran 2" />
-              <input type="number" step="any" value={formData.humidity3} onChange={(e) => setFormData({ ...formData, humidity3: e.target.value })} placeholder="Pengukuran 3" />
+              <input type="number" step="any" value={formData.humidity1} onChange={(e) => setFormData({ ...formData, humidity1: e.target.value })} placeholder="1" />
+              <input type="number" step="any" value={formData.humidity2} onChange={(e) => setFormData({ ...formData, humidity2: e.target.value })} placeholder="2" />
+              <input type="number" step="any" value={formData.humidity3} onChange={(e) => setFormData({ ...formData, humidity3: e.target.value })} placeholder="3" />
             </div>
           </label>
-          <label>Kebisingan
+          <label>Kebisingan (dB)
             <div className="inline-fields">
-              <input type="number" step="any" value={formData.noise1} onChange={(e) => setFormData({ ...formData, noise1: e.target.value })} placeholder="Pengukuran 1" />
-              <input type="number" step="any" value={formData.noise2} onChange={(e) => setFormData({ ...formData, noise2: e.target.value })} placeholder="Pengukuran 2" />
-              <input type="number" step="any" value={formData.noise3} onChange={(e) => setFormData({ ...formData, noise3: e.target.value })} placeholder="Pengukuran 3" />
+              <input type="number" step="any" value={formData.noise1} onChange={(e) => setFormData({ ...formData, noise1: e.target.value })} placeholder="1" />
+              <input type="number" step="any" value={formData.noise2} onChange={(e) => setFormData({ ...formData, noise2: e.target.value })} placeholder="2" />
+              <input type="number" step="any" value={formData.noise3} onChange={(e) => setFormData({ ...formData, noise3: e.target.value })} placeholder="3" />
             </div>
           </label>
-          <label>Pencahayaan
+          <label>Pencahayaan (lux)
             <div className="inline-fields">
-              <input type="number" step="any" value={formData.lighting1} onChange={(e) => setFormData({ ...formData, lighting1: e.target.value })} placeholder="Pengukuran 1" />
-              <input type="number" step="any" value={formData.lighting2} onChange={(e) => setFormData({ ...formData, lighting2: e.target.value })} placeholder="Pengukuran 2" />
-              <input type="number" step="any" value={formData.lighting3} onChange={(e) => setFormData({ ...formData, lighting3: e.target.value })} placeholder="Pengukuran 3" />
+              <input type="number" step="any" value={formData.lighting1} onChange={(e) => setFormData({ ...formData, lighting1: e.target.value })} placeholder="1" />
+              <input type="number" step="any" value={formData.lighting2} onChange={(e) => setFormData({ ...formData, lighting2: e.target.value })} placeholder="2" />
+              <input type="number" step="any" value={formData.lighting3} onChange={(e) => setFormData({ ...formData, lighting3: e.target.value })} placeholder="3" />
             </div>
           </label>
-          <label>PM 2.5
+          <label>PM 2.5 (µg/m³)
             <div className="inline-fields">
-              <input type="number" step="any" value={formData.pm25_1} onChange={(e) => setFormData({ ...formData, pm25_1: e.target.value })} placeholder="Pengukuran 1" />
-              <input type="number" step="any" value={formData.pm25_2} onChange={(e) => setFormData({ ...formData, pm25_2: e.target.value })} placeholder="Pengukuran 2" />
-              <input type="number" step="any" value={formData.pm25_3} onChange={(e) => setFormData({ ...formData, pm25_3: e.target.value })} placeholder="Pengukuran 3" />
+              <input type="number" step="any" value={formData.pm25_1} onChange={(e) => setFormData({ ...formData, pm25_1: e.target.value })} placeholder="1" />
+              <input type="number" step="any" value={formData.pm25_2} onChange={(e) => setFormData({ ...formData, pm25_2: e.target.value })} placeholder="2" />
+              <input type="number" step="any" value={formData.pm25_3} onChange={(e) => setFormData({ ...formData, pm25_3: e.target.value })} placeholder="3" />
             </div>
           </label>
-          <label>PM 10
+          <label>PM 10 (µg/m³)
             <div className="inline-fields">
-              <input type="number" step="any" value={formData.pm10_1} onChange={(e) => setFormData({ ...formData, pm10_1: e.target.value })} placeholder="Pengukuran 1" />
-              <input type="number" step="any" value={formData.pm10_2} onChange={(e) => setFormData({ ...formData, pm10_2: e.target.value })} placeholder="Pengukuran 2" />
-              <input type="number" step="any" value={formData.pm10_3} onChange={(e) => setFormData({ ...formData, pm10_3: e.target.value })} placeholder="Pengukuran 3" />
+              <input type="number" step="any" value={formData.pm10_1} onChange={(e) => setFormData({ ...formData, pm10_1: e.target.value })} placeholder="1" />
+              <input type="number" step="any" value={formData.pm10_2} onChange={(e) => setFormData({ ...formData, pm10_2: e.target.value })} placeholder="2" />
+              <input type="number" step="any" value={formData.pm10_3} onChange={(e) => setFormData({ ...formData, pm10_3: e.target.value })} placeholder="3" />
             </div>
           </label>
-          <label>Laju Ventilasi
+          <label>Ventilasi (m³/h)
             <div className="inline-fields">
-              <input type="number" step="any" value={formData.ventilationRate1} onChange={(e) => setFormData({ ...formData, ventilationRate1: e.target.value })} placeholder="Pengukuran 1" />
-              <input type="number" step="any" value={formData.ventilationRate2} onChange={(e) => setFormData({ ...formData, ventilationRate2: e.target.value })} placeholder="Pengukuran 2" />
-              <input type="number" step="any" value={formData.ventilationRate3} onChange={(e) => setFormData({ ...formData, ventilationRate3: e.target.value })} placeholder="Pengukuran 3" />
+              <input type="number" step="any" value={formData.ventilationRate1} onChange={(e) => setFormData({ ...formData, ventilationRate1: e.target.value })} placeholder="1" />
+              <input type="number" step="any" value={formData.ventilationRate2} onChange={(e) => setFormData({ ...formData, ventilationRate2: e.target.value })} placeholder="2" />
+              <input type="number" step="any" value={formData.ventilationRate3} onChange={(e) => setFormData({ ...formData, ventilationRate3: e.target.value })} placeholder="3" />
             </div>
           </label>
         </div>
@@ -2318,39 +2320,41 @@ function UjiUdaraPage({ profile, locations }: { profile: UserProfile | null; loc
     {!formOpen && tests.length === 0 && <div className="empty-state"><span>🌬️</span><h2>Belum ada data uji udara</h2><p>Klik tombol di atas untuk menambahkan hasil uji udara baru.</p></div>}
 
     {!formOpen && tests.length > 0 && (
-      <table className="data-table">
-        <thead>
-          <tr>
-            <th>Lokasi</th>
-            <th>Tanggal Uji</th>
-            <th>Suhu</th>
-            <th>Kelembapan</th>
-            <th>Kebisingan</th>
-            <th>PM 2.5</th>
-            <th>PM 10</th>
-            <th>Aksi</th>
-          </tr>
-        </thead>
-        <tbody>
-          {tests.map(test => (
-            <tr key={test.id}>
-              <td><strong>{locations.find(l => l.id === test.locationId)?.name || 'Unknown'}</strong></td>
-              <td>{test.testDate}</td>
-              <td>{test.temperature1}{test.temperatureUnit}</td>
-              <td>{test.humidity1 || '-'}</td>
-              <td>{test.noise1 || '-'}</td>
-              <td>{test.pm25_1 || '-'}</td>
-              <td>{test.pm10_1 || '-'}</td>
-              <td>
-                <div className="entry-actions">
-                  <button className="text-button" onClick={() => openForm(test)} type="button">Edit</button>
-                  <button className="text-button" onClick={() => remove(test)} type="button">Hapus</button>
-                </div>
-              </td>
+      <div className="data-table-wrapper">
+        <table className="data-table">
+          <thead>
+            <tr>
+              <th>Lokasi</th>
+              <th>Tanggal Uji</th>
+              <th>Suhu</th>
+              <th>Kelembapan</th>
+              <th>Kebisingan</th>
+              <th>PM 2.5</th>
+              <th>PM 10</th>
+              <th>Aksi</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {tests.map(test => (
+              <tr key={test.id}>
+                <td><strong>{locations.find(l => l.id === test.locationId)?.name || 'Unknown'}</strong></td>
+                <td>{test.testDate}</td>
+                <td>{test.temperature1}{test.temperatureUnit}</td>
+                <td>{test.humidity1 || '-'}</td>
+                <td>{test.noise1 || '-'}</td>
+                <td>{test.pm25_1 || '-'}</td>
+                <td>{test.pm10_1 || '-'}</td>
+                <td>
+                  <div className="entry-actions">
+                    <button className="text-button" onClick={() => openForm(test)} type="button">Edit</button>
+                    <button className="text-button" onClick={() => remove(test)} type="button">Hapus</button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     )}
   </section>
 }

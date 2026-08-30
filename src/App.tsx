@@ -124,6 +124,7 @@ type FamilyCard = {
   entryId: string
   kkSequence: number
   kkNumber: string
+  kepalaKeluarga: string
   address: string
   totalJiwa: number
   jiwaMenetap: number
@@ -667,6 +668,15 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
   const [familyCards, setFamilyCards] = useState<FamilyCard[]>([])
   const [questionnaireResponses, setQuestionnaireResponses] = useState<QuestionnaireResponse[]>([])
   const [currentKkIndex, setCurrentKkIndex] = useState(0)
+  const [regionsReady, setRegionsReady] = useState(false)
+
+  // Watch for regions to be loaded
+  useEffect(() => {
+    if (kelurahan.length > 0 && rw.length > 0 && rt.length > 0) {
+      setRegionsReady(true)
+      console.log('Regions are ready for entry form')
+    }
+  }, [kelurahan, rw, rt])
 
   async function loadEntries() {
     if (!supabase || !profile) {
@@ -696,7 +706,17 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
           const { data: qrData } = await supabase!.from('questionnaire_responses').select('*').in('family_card_id', fcData?.map((fc: any) => fc.id) || [])
           return {
             ...entry,
-            familyCards: fcData || [],
+            familyCards: (fcData || []).map((fc: any) => ({
+              id: fc.id,
+              entryId: fc.entry_id,
+              kkSequence: fc.kk_sequence,
+              kkNumber: fc.kk_number,
+              kepalaKeluarga: fc.kepala_keluarga || '',
+              address: fc.address,
+              totalJiwa: fc.total_jiwa,
+              jiwaMenetap: fc.jiwa_menetap,
+              jambanCount: fc.jamban_count
+            })),
             questionnaireResponses: qrData || []
           }
         })
@@ -762,6 +782,7 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
       entryId: '',
       kkSequence: familyCards.length + 1,
       kkNumber: '',
+      kepalaKeluarga: familyCards.length === 0 ? 'Kepala Keluarga Utama' : '',
       address: '',
       totalJiwa: 0,
       jiwaMenetap: 0,
@@ -864,6 +885,7 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
             entry_id: entryId,
             kk_sequence: fc.kkSequence,
             kk_number: fc.kkNumber,
+            kepala_keluarga: fc.kepalaKeluarga,
             address: fc.address,
             total_jiwa: fc.totalJiwa,
             jiwa_menetap: fc.jiwaMenetap,
@@ -878,6 +900,25 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
           }
           fcId = newFc.id
           console.log('Family card created successfully:', fcId)
+        } else {
+          // Update existing family card
+          const { error: fcUpdateError } = await supabase.from('family_cards').update({
+            kk_sequence: fc.kkSequence,
+            kk_number: fc.kkNumber,
+            kepala_keluarga: fc.kepalaKeluarga,
+            address: fc.address,
+            total_jiwa: fc.totalJiwa,
+            jiwa_menetap: fc.jiwaMenetap,
+            jamban_count: fc.jambanCount
+          }).eq('id', fc.id)
+
+          if (fcUpdateError) {
+            console.error('Family card update error:', fcUpdateError)
+            setError(fcUpdateError.message || 'Gagal mengupdate kartu keluarga')
+            setSubmitting(false)
+            return
+          }
+          console.log('Family card updated successfully:', fc.id)
         }
 
         // Handle questionnaire responses for this family card
@@ -969,20 +1010,20 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
           <label>Tanggal Entry<input name="entryDate" type="date" defaultValue={editing?.entryDate || new Date().toISOString().split('T')[0]} required /></label>
           <label>Nama Petugas<input value={profile?.fullName || ''} disabled /></label>
           <label>Kelurahan
-            <select value={selectedKelurahanId} onChange={(e) => setSelectedKelurahanId(e.target.value)} required>
-              <option value="">Pilih kelurahan</option>
+            <select value={selectedKelurahanId} onChange={(e) => setSelectedKelurahanId(e.target.value)} required disabled={!regionsReady}>
+              <option value="">{!regionsReady ? 'Memuat data...' : 'Pilih kelurahan'}</option>
               {userKelurahan.map(k => <option key={k.id} value={k.id}>{k.name}</option>)}
             </select>
           </label>
           <label>RW
-            <select value={selectedRwId} onChange={(e) => setSelectedRwId(e.target.value)} disabled={!selectedKelurahanId} required>
-              <option value="">Pilih RW</option>
+            <select value={selectedRwId} onChange={(e) => setSelectedRwId(e.target.value)} disabled={!selectedKelurahanId || !regionsReady} required>
+              <option value="">{!regionsReady ? 'Memuat data...' : selectedKelurahanId ? 'Pilih RW' : 'Pilih kelurahan terlebih dahulu'}</option>
               {userRw.filter(r => !selectedKelurahanId || r.kelurahanId === selectedKelurahanId).map(r => <option key={r.id} value={r.id}>RW {r.name}</option>)}
             </select>
           </label>
           <label>RT
-            <select value={selectedRtId} onChange={(e) => setSelectedRtId(e.target.value)} disabled={!selectedRwId} required>
-              <option value="">Pilih RT</option>
+            <select value={selectedRtId} onChange={(e) => setSelectedRtId(e.target.value)} disabled={!selectedRwId || !regionsReady} required>
+              <option value="">{!regionsReady ? 'Memuat data...' : selectedRwId ? 'Pilih RT' : 'Pilih RW terlebih dahulu'}</option>
               {userRt.filter(r => !selectedRwId || r.rwId === selectedRwId).map(r => <option key={r.id} value={r.id}>RT {r.name}</option>)}
             </select>
           </label>
@@ -1000,7 +1041,7 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
         {familyCards.map((fc, index) => (
           <div key={index} className="kk-card" style={{ border: currentKkIndex === index ? '2px solid #007bff' : '1px solid #ddd', padding: '16px', marginBottom: '16px', borderRadius: '8px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '12px' }}>
-              <strong>KK #{fc.kkSequence}</strong>
+              <strong>{index === 0 ? '🏠 Kepala Keluarga Utama' : `KK #${fc.kkSequence}`}</strong>
               <button className="text-button" onClick={() => removeFamilyCard(index)} type="button">Hapus</button>
             </div>
             <div className="form-grid">
@@ -1009,6 +1050,11 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
                 updated[index].kkNumber = e.target.value
                 setFamilyCards(updated)
               }} placeholder="16 digit nomor KK" required /></label>
+              <label>Nama Kepala Keluarga<input value={fc.kepalaKeluarga} onChange={(e) => {
+                const updated = [...familyCards]
+                updated[index].kepalaKeluarga = e.target.value
+                setFamilyCards(updated)
+              }} placeholder="Nama lengkap kepala keluarga" required /></label>
               <label>Alamat<textarea value={fc.address} onChange={(e) => {
                 const updated = [...familyCards]
                 updated[index].address = e.target.value

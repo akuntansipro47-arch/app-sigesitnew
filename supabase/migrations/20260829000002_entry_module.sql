@@ -20,6 +20,7 @@ create table if not exists public.family_cards (
   entry_id uuid not null references public.entries(id) on delete cascade,
   kk_sequence integer not null, -- urutan KK dalam entry (1-20)
   kk_number text not null,
+  kepala_keluarga text,
   address text,
   total_jiwa integer,
   jiwa_menetap integer,

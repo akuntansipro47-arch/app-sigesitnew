@@ -406,42 +406,61 @@ function App() {
   useEffect(() => {
     async function loadRegions() {
       if (supabaseConfigured && supabase) {
-        const [kelurahanResult, rwResult, rtResult] = await Promise.all([
-          supabase.from('kelurahan').select('id, name, code').order('name'),
-          supabase.from('rw').select('id, number, kelurahan_id'),
-          supabase.from('rt').select('id, number, rw_id'),
-        ])
-        if (!kelurahanResult.error && !rwResult.error && !rtResult.error) {
-          const kelurahanData = kelurahanResult.data.map((item) => ({ id: item.id, name: item.name, code: item.code }))
-          setKelurahan(kelurahanData)
-          
-          // Sort RW by kelurahan name, then by number
-          const rwData = rwResult.data.map((item) => ({ id: item.id, name: item.number, kelurahanId: item.kelurahan_id }))
-          rwData.sort((a, b) => {
-            const kelurahanA = kelurahanData.find(k => k.id === a.kelurahanId)?.name || ''
-            const kelurahanB = kelurahanData.find(k => k.id === b.kelurahanId)?.name || ''
-            if (kelurahanA !== kelurahanB) return kelurahanA.localeCompare(kelurahanB)
-            return a.name.localeCompare(b.name)
+        try {
+          console.log('Loading regions from database...')
+          const [kelurahanResult, rwResult, rtResult] = await Promise.all([
+            supabase.from('kelurahan').select('id, name, code').order('name'),
+            supabase.from('rw').select('id, number, kelurahan_id'),
+            supabase.from('rt').select('id, number, rw_id'),
+          ])
+          console.log('Regions load result:', { 
+            kelurahanError: kelurahanResult.error?.message, 
+            rwError: rwResult.error?.message, 
+            rtError: rtResult.error?.message,
+            kelurahanCount: kelurahanResult.data?.length,
+            rwCount: rwResult.data?.length,
+            rtCount: rtResult.data?.length
           })
-          setRw(rwData)
           
-          // Sort RT by kelurahan name, then RW number, then RT number
-          const rtData = rtResult.data.map((item) => ({ id: item.id, name: item.number, rwId: item.rw_id }))
-          rtData.sort((a, b) => {
-            const rwA = rwData.find(r => r.id === a.rwId)
-            const rwB = rwData.find(r => r.id === b.rwId)
-            const kelurahanA = kelurahanData.find(k => k.id === rwA?.kelurahanId)?.name || ''
-            const kelurahanB = kelurahanData.find(k => k.id === rwB?.kelurahanId)?.name || ''
-            if (kelurahanA !== kelurahanB) return kelurahanA.localeCompare(kelurahanB)
-            if (rwA?.name !== rwB?.name) return (rwA?.name || '').localeCompare(rwB?.name || '')
-            return a.name.localeCompare(b.name)
-          })
-          setRt(rtData)
-          
-          setRegionsLoaded(true)
-          return
+          if (!kelurahanResult.error && !rwResult.error && !rtResult.error) {
+            const kelurahanData = kelurahanResult.data.map((item) => ({ id: item.id, name: item.name, code: item.code }))
+            setKelurahan(kelurahanData)
+            
+            // Sort RW by kelurahan name, then by number
+            const rwData = rwResult.data.map((item) => ({ id: item.id, name: item.number, kelurahanId: item.kelurahan_id }))
+            rwData.sort((a, b) => {
+              const kelurahanA = kelurahanData.find(k => k.id === a.kelurahanId)?.name || ''
+              const kelurahanB = kelurahanData.find(k => k.id === b.kelurahanId)?.name || ''
+              if (kelurahanA !== kelurahanB) return kelurahanA.localeCompare(kelurahanB)
+              return a.name.localeCompare(b.name)
+            })
+            setRw(rwData)
+            
+            // Sort RT by kelurahan name, then RW number, then RT number
+            const rtData = rtResult.data.map((item) => ({ id: item.id, name: item.number, rwId: item.rw_id }))
+            rtData.sort((a, b) => {
+              const rwA = rwData.find(r => r.id === a.rwId)
+              const rwB = rwData.find(r => r.id === b.rwId)
+              const kelurahanA = kelurahanData.find(k => k.id === rwA?.kelurahanId)?.name || ''
+              const kelurahanB = kelurahanData.find(k => k.id === rwB?.kelurahanId)?.name || ''
+              if (kelurahanA !== kelurahanB) return kelurahanA.localeCompare(kelurahanB)
+              if (rwA?.name !== rwB?.name) return (rwA?.name || '').localeCompare(rwB?.name || '')
+              return a.name.localeCompare(b.name)
+            })
+            setRt(rtData)
+            
+            setRegionsLoaded(true)
+            console.log('Regions loaded successfully from database')
+            return
+          } else {
+            console.error('Error loading regions:', { kelurahanError: kelurahanResult.error, rwError: rwResult.error, rtError: rtResult.error })
+          }
+        } catch (err) {
+          console.error('Unexpected error loading regions:', err)
         }
       }
+      // Fallback to localStorage if Supabase fails or not configured
+      console.log('Using fallback to localStorage for regions')
       const stored = localStorage.getItem('sigesit-regions')
       if (stored) {
         const data = JSON.parse(stored) as { kelurahan: Region[]; rw: Region[]; rt: Region[] }
@@ -461,9 +480,21 @@ function App() {
   useEffect(() => {
     async function loadLocations() {
       if (supabaseConfigured && supabase) {
-        const { data, error } = await supabase.from('locations').select('*').order('name')
-        if (!error && data) {
-          setLocations((data as LocationRow[]).map(mapLocationRow))
+        try {
+          console.log('Loading locations from database...')
+          const { data, error } = await supabase.from('locations').select('*').order('name')
+          console.log('Load locations result:', { data, error: error?.message, dataLength: data?.length })
+          
+          if (error) {
+            console.error('Error loading locations:', error)
+          } else if (data && data.length > 0) {
+            setLocations((data as LocationRow[]).map(mapLocationRow))
+            console.log('Locations loaded successfully:', data.length)
+          } else {
+            console.log('No locations found in database')
+          }
+        } catch (err) {
+          console.error('Unexpected error loading locations:', err)
         }
       }
     }
@@ -473,9 +504,21 @@ function App() {
   useEffect(() => {
     async function loadPKMInfo() {
       if (supabaseConfigured && supabase) {
-        const { data, error } = await supabase.from('pkm_info').select('*').single()
-        if (!error && data) {
-          setPkmInfo(mapPKMInfoRow(data as PKMInfoRow))
+        try {
+          console.log('Loading PKM info from database...')
+          const { data, error } = await supabase.from('pkm_info').select('*').single()
+          console.log('Load PKM info result:', { data, error: error?.message })
+          
+          if (error) {
+            console.error('Error loading PKM info:', error)
+            // This is expected if no PKM info exists yet
+            console.log('No PKM info found, will use defaults')
+          } else if (data) {
+            setPkmInfo(mapPKMInfoRow(data as PKMInfoRow))
+            console.log('PKM info loaded successfully')
+          }
+        } catch (err) {
+          console.error('Unexpected error loading PKM info:', err)
         }
       }
     }
@@ -1068,10 +1111,31 @@ function ProfilePage() {
   })
 
   async function loadPKMInfo() {
-    if (!supabase) return
+    if (!supabase) {
+      console.error('Supabase client not available for PKM info')
+      setLoading(false)
+      return
+    }
     setLoading(true)
-    const { data, error: loadError } = await supabase.from('pkm_info').select('*').single()
-    if (!loadError && data) {
+    try {
+      console.log('Loading PKM info from database...')
+      const { data, error: loadError } = await supabase.from('pkm_info').select('*').single()
+      console.log('Load PKM info result:', { data, error: loadError?.message })
+      
+      if (loadError) {
+        console.error('Error loading PKM info:', loadError)
+        // This is expected if no PKM info exists yet
+        console.log('No PKM info found, using defaults')
+        setLoading(false)
+        return
+      }
+      
+      if (!data) {
+        console.log('No PKM info data found')
+        setLoading(false)
+        return
+      }
+      
       const info = mapPKMInfoRow(data as PKMInfoRow)
       setPkmInfo(info)
       setFormData({
@@ -1085,8 +1149,13 @@ function ProfilePage() {
         twitter: info.twitter || '',
       })
       setLogoPreview(info.logoUrl || null)
+      console.log('PKM info loaded successfully')
+    } catch (err) {
+      console.error('Unexpected error in loadPKMInfo:', err)
+      setError(`Terjadi kesalahan: ${err instanceof Error ? err.message : 'Unknown error'}`)
+    } finally {
+      setLoading(false)
     }
-    setLoading(false)
   }
 
   useEffect(() => { void loadPKMInfo() }, [])
@@ -1301,13 +1370,39 @@ function LokasiPage({ kelurahan, rw, rt }: { kelurahan: Region[]; rw: Region[]; 
   const [selectedRtId, setSelectedRtId] = useState('')
 
   async function loadLocations() {
-    if (!supabase) return
-    setLoading(true)
-    const { data, error: loadError } = await supabase.from('locations').select('*').order('name')
-    if (!loadError && data) {
-      setLocations((data as LocationRow[]).map(mapLocationRow))
+    if (!supabase) {
+      console.error('Supabase client not available for locations')
+      setLoading(false)
+      return
     }
-    setLoading(false)
+    setLoading(true)
+    try {
+      console.log('Loading locations from database...')
+      const { data, error: loadError } = await supabase.from('locations').select('*').order('name')
+      console.log('Load locations result:', { data, error: loadError?.message, dataLength: data?.length })
+      
+      if (loadError) {
+        console.error('Error loading locations:', loadError)
+        setError(`Gagal memuat data lokasi: ${loadError.message}`)
+        setLoading(false)
+        return
+      }
+      
+      if (!data || data.length === 0) {
+        console.log('No locations found in database')
+        setLocations([])
+        setLoading(false)
+        return
+      }
+      
+      setLocations((data as LocationRow[]).map(mapLocationRow))
+      console.log('Locations loaded successfully:', data.length)
+    } catch (err) {
+      console.error('Unexpected error in loadLocations:', err)
+      setError(`Terjadi kesalahan: ${err instanceof Error ? err.message : 'Unknown error'}`)
+    } finally {
+      setLoading(false)
+    }
   }
 
   useEffect(() => { void loadLocations() }, [])
@@ -1441,13 +1536,39 @@ function UjiAirPage({ profile, locations }: { profile: UserProfile | null; locat
   })
 
   async function loadTests() {
-    if (!supabase || !profile) return
-    setLoading(true)
-    const { data, error: loadError } = await supabase.from('water_quality_tests').select('*').eq('officer_id', profile.id).order('test_date', { ascending: false })
-    if (!loadError && data) {
-      setTests((data as WaterQualityTestRow[]).map(mapWaterQualityTestRow))
+    if (!supabase || !profile) {
+      console.error('Supabase or profile not available for water quality tests')
+      setLoading(false)
+      return
     }
-    setLoading(false)
+    setLoading(true)
+    try {
+      console.log('Loading water quality tests for officer:', profile.id)
+      const { data, error: loadError } = await supabase.from('water_quality_tests').select('*').eq('officer_id', profile.id).order('test_date', { ascending: false })
+      console.log('Load water quality tests result:', { data, error: loadError?.message, dataLength: data?.length })
+      
+      if (loadError) {
+        console.error('Error loading water quality tests:', loadError)
+        setError(`Gagal memuat data uji air: ${loadError.message}`)
+        setLoading(false)
+        return
+      }
+      
+      if (!data || data.length === 0) {
+        console.log('No water quality tests found')
+        setTests([])
+        setLoading(false)
+        return
+      }
+      
+      setTests((data as WaterQualityTestRow[]).map(mapWaterQualityTestRow))
+      console.log('Water quality tests loaded successfully:', data.length)
+    } catch (err) {
+      console.error('Unexpected error in loadTests:', err)
+      setError(`Terjadi kesalahan: ${err instanceof Error ? err.message : 'Unknown error'}`)
+    } finally {
+      setLoading(false)
+    }
   }
 
   useEffect(() => { void loadTests() }, [profile])
@@ -1697,13 +1818,39 @@ function UjiUdaraPage({ profile, locations }: { profile: UserProfile | null; loc
   })
 
   async function loadTests() {
-    if (!supabase || !profile) return
-    setLoading(true)
-    const { data, error: loadError } = await supabase.from('air_quality_tests').select('*').eq('officer_id', profile.id).order('test_date', { ascending: false })
-    if (!loadError && data) {
-      setTests((data as AirQualityTestRow[]).map(mapAirQualityTestRow))
+    if (!supabase || !profile) {
+      console.error('Supabase or profile not available for air quality tests')
+      setLoading(false)
+      return
     }
-    setLoading(false)
+    setLoading(true)
+    try {
+      console.log('Loading air quality tests for officer:', profile.id)
+      const { data, error: loadError } = await supabase.from('air_quality_tests').select('*').eq('officer_id', profile.id).order('test_date', { ascending: false })
+      console.log('Load air quality tests result:', { data, error: loadError?.message, dataLength: data?.length })
+      
+      if (loadError) {
+        console.error('Error loading air quality tests:', loadError)
+        setError(`Gagal memuat data uji udara: ${loadError.message}`)
+        setLoading(false)
+        return
+      }
+      
+      if (!data || data.length === 0) {
+        console.log('No air quality tests found')
+        setTests([])
+        setLoading(false)
+        return
+      }
+      
+      setTests((data as AirQualityTestRow[]).map(mapAirQualityTestRow))
+      console.log('Air quality tests loaded successfully:', data.length)
+    } catch (err) {
+      console.error('Unexpected error in loadTests:', err)
+      setError(`Terjadi kesalahan: ${err instanceof Error ? err.message : 'Unknown error'}`)
+    } finally {
+      setLoading(false)
+    }
   }
 
   useEffect(() => { void loadTests() }, [profile])
@@ -1990,11 +2137,39 @@ function PenggunaPage({ kelurahan, rw, rt, currentUserId }: { kelurahan: Region[
   const [moduleAccess, setModuleAccess] = useState({ entry: true, wilayah: true, pengguna: false, lokasi: true, uji_air: true, uji_udara: true })
 
   async function loadUsers() {
-    if (!supabase) return
+    if (!supabase) {
+      console.error('Supabase client not available')
+      setLoading(false)
+      return
+    }
     setLoading(true)
-    const { data, error: loadError } = await supabase.from('pkm_profiles').select('*').order('full_name')
-    if (!loadError && data) setUsers((data as ProfileRow[]).map(mapProfileRow))
-    setLoading(false)
+    try {
+      console.log('Loading users from pkm_profiles...')
+      const { data, error: loadError } = await supabase.from('pkm_profiles').select('*').order('full_name')
+      console.log('Load users result:', { data, error: loadError?.message, dataLength: data?.length })
+      
+      if (loadError) {
+        console.error('Error loading users:', loadError)
+        setError(`Gagal memuat data pengguna: ${loadError.message}`)
+        setLoading(false)
+        return
+      }
+      
+      if (!data || data.length === 0) {
+        console.log('No users found in database')
+        setUsers([])
+        setLoading(false)
+        return
+      }
+      
+      setUsers((data as ProfileRow[]).map(mapProfileRow))
+      console.log('Users loaded successfully:', data.length)
+    } catch (err) {
+      console.error('Unexpected error in loadUsers:', err)
+      setError(`Terjadi kesalahan: ${err instanceof Error ? err.message : 'Unknown error'}`)
+    } finally {
+      setLoading(false)
+    }
   }
 
   useEffect(() => { void loadUsers() }, [])
@@ -2141,6 +2316,7 @@ function PenggunaPage({ kelurahan, rw, rt, currentUserId }: { kelurahan: Region[
       <div className="form-actions"><button className="secondary" onClick={() => setFormOpen(false)} type="button">Batal</button><button className="primary" disabled={submitting} type="submit">{submitting ? 'Menyimpan…' : 'Simpan'}</button></div>
     </form>}
     <div className="region-list">
+      {error && <div className="error-message" style={{ marginBottom: '16px' }}>{error}</div>}
       {loading ? <div className="empty-state"><span>♙</span><h2>Memuat data pengguna…</h2></div> : users.length === 0 ? <div className="empty-state"><span>♙</span><h2>Belum ada pengguna</h2><p>Tambahkan akun kader atau admin untuk mulai mengelola akses.</p></div> : users.map((user) => <article className="region-row" key={user.id}>
         <div><strong>{user.fullName}</strong><small>{user.username} · {user.email} · {user.role === 'super_admin' ? 'Super Admin' : 'Kader'} {!user.isActive && '· Nonaktif'}</small></div>
         <div className="row-actions">

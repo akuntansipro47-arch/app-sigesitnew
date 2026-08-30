@@ -31,7 +31,7 @@ CREATE TABLE IF NOT EXISTS water_quality_tests (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   location_id UUID REFERENCES locations(id) ON DELETE CASCADE,
   test_date DATE NOT NULL,
-  officer_id UUID REFERENCES pkm_profiles(id),
+  officer_id UUID REFERENCES profiles(id),
   
   -- Parameter Fisik
   temperature_value DECIMAL(10, 2),
@@ -69,7 +69,7 @@ CREATE TABLE IF NOT EXISTS air_quality_tests (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   location_id UUID REFERENCES locations(id) ON DELETE CASCADE,
   test_date DATE NOT NULL,
-  officer_id UUID REFERENCES pkm_profiles(id),
+  officer_id UUID REFERENCES profiles(id),
   
   -- Parameter Udara (3 kolom untuk setiap parameter)
   temperature_1 DECIMAL(10, 2),

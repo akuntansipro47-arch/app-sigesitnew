@@ -571,8 +571,56 @@ function WilayahPage({ kelurahan, rw, rt, setKelurahan, setRw, setRt }: { kelura
   const [formOpen, setFormOpen] = useState(false)
   const [selectedKelurahanId, setSelectedKelurahanId] = useState('')
   const [parentId, setParentId] = useState('')
+  const [loading, setLoading] = useState(false)
   const items = level === 'kelurahan' ? kelurahan : level === 'rw' ? rw : rt
   const parents = level === 'rw' ? kelurahan : rw.filter((item) => item.kelurahanId === selectedKelurahanId)
+
+  // Reload data when switching to this view
+  useEffect(() => {
+    async function reloadRegions() {
+      if (supabaseConfigured && supabase) {
+        setLoading(true)
+        try {
+          console.log('Reloading regions for WilayahPage...')
+          const [kelurahanResult, rwResult, rtResult] = await Promise.all([
+            supabase.from('kelurahan').select('id, name, code').order('name'),
+            supabase.from('rw').select('id, number, kelurahan_id'),
+            supabase.from('rt').select('id, number, rw_id'),
+          ])
+          
+          let kelurahanData: Region[] = []
+          
+          if (!kelurahanResult.error && kelurahanResult.data) {
+            kelurahanData = kelurahanResult.data.map((item) => ({ id: item.id, name: item.name, code: item.code }))
+            setKelurahan(kelurahanData)
+          }
+          
+          if (!rwResult.error && rwResult.data) {
+            const rwData = rwResult.data.map((item) => ({ id: item.id, name: item.number, kelurahanId: item.kelurahan_id }))
+            rwData.sort((a, b) => {
+              const kelurahanA = kelurahanData.find(k => k.id === a.kelurahanId)?.name || ''
+              const kelurahanB = kelurahanData.find(k => k.id === b.kelurahanId)?.name || ''
+              if (kelurahanA !== kelurahanB) return kelurahanA.localeCompare(kelurahanB)
+              return a.name.localeCompare(b.name)
+            })
+            setRw(rwData)
+          }
+          
+          if (!rtResult.error && rtResult.data) {
+            const rtData = rtResult.data.map((item) => ({ id: item.id, name: item.number, rwId: item.rw_id }))
+            setRt(rtData)
+          }
+          
+          console.log('Regions reloaded successfully')
+        } catch (err) {
+          console.error('Error reloading regions:', err)
+        } finally {
+          setLoading(false)
+        }
+      }
+    }
+    reloadRegions()
+  }, [])
 
   function openForm(item?: Region) {
     setEditing(item ?? null)
@@ -632,6 +680,19 @@ function WilayahPage({ kelurahan, rw, rt, setKelurahan, setRw, setRt }: { kelura
     const kelurahanItem = kelurahan.find((current) => current.id === rwItem?.kelurahanId)
     return `RW ${rwItem?.name ?? '-'} · Kelurahan: ${kelurahanItem?.name ?? '-'}`
   }
+  
+  if (loading) {
+    return <section className="master-page">
+      <div className="page-heading">
+        <div><p className="eyebrow">DATA MASTER</p><h1>Data Wilayah</h1><p>Kelola Kelurahan, RW, dan RT dengan hubungan wilayah yang terjaga.</p></div>
+      </div>
+      <div className="empty-state">
+        <span>⌘</span>
+        <h2>Memuat data wilayah...</h2>
+      </div>
+    </section>
+  }
+  
   return <section className="master-page"><div className="page-heading"><div><p className="eyebrow">DATA MASTER</p><h1>Data Wilayah</h1><p>Kelola Kelurahan, RW, dan RT dengan hubungan wilayah yang terjaga.</p></div><button className="primary" onClick={() => openForm()} type="button">+ Tambah {level}</button></div><div className="region-tabs">{(['kelurahan', 'rw', 'rt'] as RegionLevel[]).map((tab) => <button className={level === tab ? 'active' : ''} key={tab} onClick={() => { setLevel(tab); setFormOpen(false) }} type="button">{tab.toUpperCase()} <span>{tab === 'kelurahan' ? kelurahan.length : tab === 'rw' ? rw.length : rt.length}</span></button>)}</div>{formOpen && <form className="region-form" onSubmit={save}><strong>{editing ? 'Edit' : 'Tambah'} {level}</strong><div className="region-form-fields"><label>Nama {level}<input name="name" defaultValue={editing?.name} placeholder={level === 'kelurahan' ? 'Nama kelurahan' : 'Contoh: 05'} required /></label>{level === 'kelurahan' && <label>Kode wilayah<input name="code" defaultValue={editing?.code} placeholder="Kode kelurahan" required /></label>}{level === 'rw' && <label>Kelurahan<select value={parentId} onChange={(event) => setParentId(event.target.value)} required><option value="">Pilih kelurahan</option>{kelurahan.map((parent) => <option key={parent.id} value={parent.id}>{parent.name}</option>)}</select></label>}{level === 'rt' && <><label>Kelurahan<select value={selectedKelurahanId} onChange={(event) => { setSelectedKelurahanId(event.target.value); setParentId('') }} required><option value="">Pilih kelurahan</option>{kelurahan.map((parent) => <option key={parent.id} value={parent.id}>{parent.name}</option>)}</select></label><label>RW<select value={parentId} onChange={(event) => setParentId(event.target.value)} disabled={!selectedKelurahanId} required><option value="">{selectedKelurahanId ? 'Pilih RW' : 'Pilih kelurahan terlebih dahulu'}</option>{parents.map((parent) => <option key={parent.id} value={parent.id}>RW {parent.name}</option>)}</select></label></>}</div><div className="form-actions"><button className="secondary" onClick={() => setFormOpen(false)} type="button">Batal</button><button className="primary" type="submit">Simpan</button></div></form>}<div className="region-list">{items.length === 0 ? <div className="empty-state"><span>⌘</span><h2>Belum ada data</h2><p>Tambahkan {level} untuk mulai membangun wilayah kerja.</p></div> : items.map((item) => <article className="region-row" key={item.id}><div><strong>{level === 'rw' ? `RW ${item.name}` : level === 'rt' ? `RT ${item.name}` : item.name}</strong><small>{level === 'kelurahan' ? `Kode: ${item.code}` : level === 'rt' ? rtLocation(item) : `Kelurahan: ${parentName(item)}`}</small></div><div className="row-actions"><button className="edit-button" onClick={() => openForm(item)} type="button">Edit</button><button className="delete-button" onClick={() => remove(item)} type="button">Hapus</button></div></article>)}</div></section>
 }
 

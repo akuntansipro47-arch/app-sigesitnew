@@ -668,15 +668,6 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
   const [familyCards, setFamilyCards] = useState<FamilyCard[]>([])
   const [questionnaireResponses, setQuestionnaireResponses] = useState<QuestionnaireResponse[]>([])
   const [currentKkIndex, setCurrentKkIndex] = useState(0)
-  const [regionsReady, setRegionsReady] = useState(false)
-
-  // Watch for regions to be loaded
-  useEffect(() => {
-    if (kelurahan.length > 0 && rw.length > 0 && rt.length > 0) {
-      setRegionsReady(true)
-      console.log('Regions are ready for entry form')
-    }
-  }, [kelurahan, rw, rt])
 
   async function loadEntries() {
     if (!supabase || !profile) {
@@ -1010,20 +1001,20 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
           <label>Tanggal Entry<input name="entryDate" type="date" defaultValue={editing?.entryDate || new Date().toISOString().split('T')[0]} required /></label>
           <label>Nama Petugas<input value={profile?.fullName || ''} disabled /></label>
           <label>Kelurahan
-            <select value={selectedKelurahanId} onChange={(e) => setSelectedKelurahanId(e.target.value)} required disabled={!regionsReady}>
-              <option value="">{!regionsReady ? 'Memuat data...' : 'Pilih kelurahan'}</option>
-              {userKelurahan.map(k => <option key={k.id} value={k.id}>{k.name}</option>)}
+            <select value={selectedKelurahanId} onChange={(e) => setSelectedKelurahanId(e.target.value)} required>
+              <option value="">Pilih kelurahan</option>
+              {userKelurahan.length === 0 ? <option value="" disabled>Tidak ada data kelurahan</option> : userKelurahan.map(k => <option key={k.id} value={k.id}>{k.name}</option>)}
             </select>
           </label>
           <label>RW
-            <select value={selectedRwId} onChange={(e) => setSelectedRwId(e.target.value)} disabled={!selectedKelurahanId || !regionsReady} required>
-              <option value="">{!regionsReady ? 'Memuat data...' : selectedKelurahanId ? 'Pilih RW' : 'Pilih kelurahan terlebih dahulu'}</option>
+            <select value={selectedRwId} onChange={(e) => setSelectedRwId(e.target.value)} disabled={!selectedKelurahanId} required>
+              <option value="">{selectedKelurahanId ? 'Pilih RW' : 'Pilih kelurahan terlebih dahulu'}</option>
               {userRw.filter(r => !selectedKelurahanId || r.kelurahanId === selectedKelurahanId).map(r => <option key={r.id} value={r.id}>RW {r.name}</option>)}
             </select>
           </label>
           <label>RT
-            <select value={selectedRtId} onChange={(e) => setSelectedRtId(e.target.value)} disabled={!selectedRwId || !regionsReady} required>
-              <option value="">{!regionsReady ? 'Memuat data...' : selectedRwId ? 'Pilih RT' : 'Pilih RW terlebih dahulu'}</option>
+            <select value={selectedRtId} onChange={(e) => setSelectedRtId(e.target.value)} disabled={!selectedRwId} required>
+              <option value="">{selectedRwId ? 'Pilih RT' : 'Pilih RW terlebih dahulu'}</option>
               {userRt.filter(r => !selectedRwId || r.rwId === selectedRwId).map(r => <option key={r.id} value={r.id}>RT {r.name}</option>)}
             </select>
           </label>

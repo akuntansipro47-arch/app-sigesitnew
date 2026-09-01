@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import './App.css'
 import { supabase, supabaseConfigured } from './lib/supabase'
@@ -21,8 +21,9 @@ type UserProfile = {
   rtId?: string
   isActive: boolean
   moduleAccess: ModuleAccess
+  isTempPassword?: boolean
 }
-type ProfileRow = { id: string; full_name: string; username: string; nik: string; phone: string; email: string | null; role: UserRole; kelurahan_id: string | null; rw_id: string | null; rt_id: string | null; is_active: boolean; module_access: Partial<ModuleAccess> | null }
+type ProfileRow = { id: string; full_name: string; username: string; nik: string; phone: string; email: string | null; role: UserRole; kelurahan_id: string | null; rw_id: string | null; rt_id: string | null; is_active: boolean; module_access: Partial<ModuleAccess> | null; is_temp_password: boolean | null }
 
 // Location module types
 type Location = {
@@ -46,8 +47,10 @@ type WaterQualityTest = {
   locationId: string
   testDate: string
   officerId: string
-  temperatureValue?: number
-  temperatureUnit: 'K' | 'C' | 'F' | 'R'
+  waterTemperatureValue?: number
+  waterTemperatureUnit: 'K' | 'C' | 'F' | 'R'
+  airTemperatureValue?: number
+  airTemperatureUnit: 'K' | 'C' | 'F' | 'R'
   tdsValue?: number
   turbidityValue?: number
   colorValue?: string
@@ -66,7 +69,7 @@ type WaterQualityTest = {
   notes?: string
 }
 
-type WaterQualityTestRow = { id: string; location_id: string; test_date: string; officer_id: string; temperature_value: number | null; temperature_unit: string; tds_value: number | null; turbidity_value: number | null; color_value: string | null; odor_value: string | null; ph_value: number | null; nitrite_value: number | null; nitrate_value: number | null; chromium_value: number | null; iron_value: number | null; manganese_value: number | null; chlorine_value: number | null; fluoride_value: number | null; aluminum_value: number | null; e_coli_value: number | null; coliform_value: number | null; notes: string | null }
+type WaterQualityTestRow = { id: string; location_id: string; test_date: string; officer_id: string; water_temperature_value: number | null; water_temperature_unit: string; air_temperature_value: number | null; air_temperature_unit: string; tds_value: number | null; turbidity_value: number | null; color_value: string | null; odor_value: string | null; ph_value: number | null; nitrite_value: number | null; nitrate_value: number | null; chromium_value: number | null; iron_value: number | null; manganese_value: number | null; chlorine_value: number | null; fluoride_value: number | null; aluminum_value: number | null; e_coli_value: number | null; coliform_value: number | null; notes: string | null }
 
 // Air Quality Test types
 type AirQualityTest = {
@@ -221,6 +224,7 @@ function mapProfileRow(row: ProfileRow): UserProfile {
     role: row.role, kelurahanId: row.kelurahan_id ?? undefined, rwId: row.rw_id ?? undefined, rtId: row.rt_id ?? undefined,
     isActive: row.is_active,
     moduleAccess: { entry: true, wilayah: true, pengguna: false, lokasi: true, uji_air: true, uji_udara: true, ...row.module_access },
+    isTempPassword: row.is_temp_password ?? false,
   }
 }
 
@@ -245,8 +249,11 @@ function mapWaterQualityTestRow(row: WaterQualityTestRow): WaterQualityTest {
     locationId: row.location_id,
     testDate: row.test_date,
     officerId: row.officer_id,
-    temperatureValue: row.temperature_value ?? undefined,
-    temperatureUnit: row.temperature_unit as 'K' | 'C' | 'F' | 'R',
+    // Handle both new and old column structure for backward compatibility
+    waterTemperatureValue: row.water_temperature_value ?? (row as any).temperature_value ?? undefined,
+    waterTemperatureUnit: (row.water_temperature_unit ?? (row as any).temperature_unit ?? 'C') as 'K' | 'C' | 'F' | 'R',
+    airTemperatureValue: row.air_temperature_value ?? undefined,
+    airTemperatureUnit: (row.air_temperature_unit ?? 'C') as 'K' | 'C' | 'F' | 'R',
     tdsValue: row.tds_value ?? undefined,
     turbidityValue: row.turbidity_value ?? undefined,
     colorValue: row.color_value ?? undefined,
@@ -264,6 +271,13 @@ function mapWaterQualityTestRow(row: WaterQualityTestRow): WaterQualityTest {
     coliformValue: row.coliform_value ?? undefined,
     notes: row.notes ?? undefined,
   }
+}
+
+function formatWaterValue(value: number | string | null | undefined, unit?: string) {
+  if (value === null || value === undefined || value === '') return '0'
+  const formatted = typeof value === 'number' ? value : Number(value)
+  if (!Number.isFinite(formatted)) return String(value)
+  return unit ? `${formatted} ${unit}` : `${formatted}`
 }
 
 function mapAirQualityTestRow(row: AirQualityTestRow): AirQualityTest {
@@ -356,10 +370,105 @@ function App() {
   const [rt, setRt] = useState(initialRt)
   const [regionsLoaded, setRegionsLoaded] = useState(false)
   const [locations, setLocations] = useState<Location[]>([])
+  const reloadLocations = useCallback(async () => {
+    if (!supabaseConfigured || !supabase) return
+    try {
+      console.log('Loading locations from database...')
+      const { data, error } = await supabase.from('locations').select('*').order('name')
+      console.log('Load locations result:', { data, error: error?.message, dataLength: data?.length })
+
+      if (error) {
+        console.error('Error loading locations:', error)
+        return
+      }
+
+      if (data && data.length > 0) {
+        setLocations((data as LocationRow[]).map(mapLocationRow))
+        console.log('Locations loaded successfully:', data.length)
+      } else {
+        setLocations([])
+        console.log('No locations found in database')
+      }
+    } catch (err) {
+      console.error('Unexpected error loading locations:', err)
+    }
+  }, [])
   const [pkmInfo, setPkmInfo] = useState<PKMInfo | null>(null)
   const [session, setSession] = useState<Session | null>(null)
   const [profile, setProfile] = useState<UserProfile | null>(null)
   const [authReady, setAuthReady] = useState(!supabaseConfigured)
+  const [showChangePassword, setShowChangePassword] = useState(false)
+  const [changePasswordError, setChangePasswordError] = useState('')
+  const [changePasswordSubmitting, setChangePasswordSubmitting] = useState(false)
+
+  async function handleChangePassword(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!supabase || !profile) return
+    
+    const data = new FormData(event.currentTarget)
+    const currentPassword = String(data.get('currentPassword') ?? '')
+    const newPassword = String(data.get('newPassword') ?? '')
+    const confirmPassword = String(data.get('confirmPassword') ?? '')
+    
+    setChangePasswordError('')
+    
+    if (newPassword !== confirmPassword) {
+      setChangePasswordError('Kata sandi baru tidak cocok dengan konfirmasi.')
+      return
+    }
+    
+    if (newPassword.length < 8) {
+      setChangePasswordError('Kata sandi baru minimal 8 karakter.')
+      return
+    }
+    
+    setChangePasswordSubmitting(true)
+    
+    try {
+      // First verify current password
+      const { error: signInError } = await supabase.auth.signInWithPassword({
+        email: profile.email || '',
+        password: currentPassword
+      })
+      
+      if (signInError) {
+        setChangePasswordError('Kata sandi saat ini salah.')
+        setChangePasswordSubmitting(false)
+        return
+      }
+      
+      // Update to new password
+      const { error: updateError } = await supabase.auth.updateUser({
+        password: newPassword
+      })
+      
+      if (updateError) {
+        setChangePasswordError('Gagal memperbarui kata sandi: ' + updateError.message)
+        setChangePasswordSubmitting(false)
+        return
+      }
+      
+      // Update the is_temp_password flag in profiles
+      const { error: profileError } = await supabase.from('profiles').update({
+        is_temp_password: false
+      }).eq('id', profile.id)
+      
+      if (profileError) {
+        setChangePasswordError('Gagal memperbarui status kata sandi: ' + profileError.message)
+        setChangePasswordSubmitting(false)
+        return
+      }
+      
+      // Update local profile state
+      setProfile({ ...profile, isTempPassword: false })
+      setShowChangePassword(false)
+      alert('Kata sandi berhasil diubah!')
+    } catch (err) {
+      setChangePasswordError('Terjadi kesalahan: ' + (err instanceof Error ? err.message : 'Unknown error'))
+    } finally {
+      setChangePasswordSubmitting(false)
+    }
+  }
 
   useEffect(() => {
     if (!supabaseConfigured || !supabase) return
@@ -382,7 +491,12 @@ function App() {
         const { data, error } = await supabase.from('profiles').select('*').eq('id', session.user.id).single()
         console.log('Load profile result:', { data, error: error?.message, userId: session.user.id, attempt: i + 1 })
         if (!error && data) {
-          setProfile(mapProfileRow(data as ProfileRow))
+          const profileData = mapProfileRow(data as ProfileRow)
+          setProfile(profileData)
+          // Show change password modal if user has temp password
+          if (profileData.isTempPassword) {
+            setShowChangePassword(true)
+          }
           return
         }
         if (i < 2) await new Promise(resolve => setTimeout(resolve, 500))
@@ -479,28 +593,8 @@ function App() {
   }, [kelurahan, rw, rt, regionsLoaded])
 
   useEffect(() => {
-    async function loadLocations() {
-      if (supabaseConfigured && supabase) {
-        try {
-          console.log('Loading locations from database...')
-          const { data, error } = await supabase.from('locations').select('*').order('name')
-          console.log('Load locations result:', { data, error: error?.message, dataLength: data?.length })
-          
-          if (error) {
-            console.error('Error loading locations:', error)
-          } else if (data && data.length > 0) {
-            setLocations((data as LocationRow[]).map(mapLocationRow))
-            console.log('Locations loaded successfully:', data.length)
-          } else {
-            console.log('No locations found in database')
-          }
-        } catch (err) {
-          console.error('Unexpected error loading locations:', err)
-        }
-      }
-    }
-    void loadLocations()
-  }, [])
+    void reloadLocations()
+  }, [reloadLocations])
 
   useEffect(() => {
     async function loadPKMInfo() {
@@ -536,6 +630,33 @@ function App() {
   const pkmLogo = pkmInfo?.logoUrl
 
   return <main className="app-shell">
+    {/* Change Password Modal for Temporary Password */}
+    {showChangePassword && (
+      <div className="modal-overlay">
+        <div className="modal-content auth-card" style={{ maxWidth: '400px', margin: '100px auto' }}>
+          <h2>Ubah Kata Sandi</h2>
+          <p>Anda harus mengubah kata sandi sementara sebelum melanjutkan.</p>
+          {changePasswordError && <div className="auth-error">{changePasswordError}</div>}
+          <form onSubmit={handleChangePassword}>
+            <label>
+              Kata sandi saat ini
+              <input name="currentPassword" required type="password" autoComplete="current-password" />
+            </label>
+            <label>
+              Kata sandi baru
+              <input name="newPassword" required type="password" minLength={8} autoComplete="new-password" />
+            </label>
+            <label>
+              Konfirmasi kata sandi baru
+              <input name="confirmPassword" required type="password" minLength={8} autoComplete="new-password" />
+            </label>
+            <button className="primary" disabled={changePasswordSubmitting} type="submit" style={{ width: '100%', marginTop: '16px' }}>
+              {changePasswordSubmitting ? 'Memproses…' : 'Ubah Kata Sandi'}
+            </button>
+          </form>
+        </div>
+      </div>
+    )}
     <header className="topbar">
       <div className="brand">
         {pkmLogo ? (
@@ -560,7 +681,7 @@ function App() {
         <p className="side-label">AKUN</p><nav><button className={view === 'profile' ? 'active' : ''} onClick={() => setView('profile')} type="button"><span>👤</span> Profil PKM</button></nav>
         <div className="sidebar-footer"><span className="sync-dot" /><div><strong>1 data belum sinkron</strong><small>Data akan terkirim saat online</small></div></div>
       </aside>
-      <section className="content">{view === 'entry' ? <EntryPage profile={profile} kelurahan={kelurahan} rw={rw} rt={rt} /> : view === 'wilayah' ? <WilayahPage kelurahan={kelurahan} rw={rw} rt={rt} setKelurahan={setKelurahan} setRw={setRw} setRt={setRt} /> : view === 'pengguna' && canAccessPengguna ? <PenggunaPage kelurahan={kelurahan} rw={rw} rt={rt} currentUserId={session?.user.id} /> : view === 'profile' ? <ProfilePage /> : view === 'lokasi' ? <LokasiPage kelurahan={kelurahan} rw={rw} rt={rt} /> : view === 'uji_air' ? <UjiAirPage profile={profile} locations={locations} /> : view === 'uji_udara' ? <UjiUdaraPage profile={profile} locations={locations} /> : <Dashboard view={view} setView={setView} pkmInfo={pkmInfo} />}</section>
+      <section className="content">{view === 'entry' ? <EntryPage profile={profile} kelurahan={kelurahan} rw={rw} rt={rt} /> : view === 'wilayah' ? <WilayahPage kelurahan={kelurahan} rw={rw} rt={rt} setKelurahan={setKelurahan} setRw={setRw} setRt={setRt} /> : view === 'pengguna' && canAccessPengguna ? <PenggunaPage kelurahan={kelurahan} rw={rw} rt={rt} currentUserId={session?.user.id} /> : view === 'profile' ? <ProfilePage /> : view === 'lokasi' ? <LokasiPage kelurahan={kelurahan} rw={rw} rt={rt} locations={locations} reloadLocations={reloadLocations} /> : view === 'uji_air' ? <UjiAirPage profile={profile} locations={locations} kelurahan={kelurahan} /> : view === 'uji_udara' ? <UjiUdaraPage profile={profile} locations={locations} kelurahan={kelurahan} /> : <Dashboard view={view} setView={setView} pkmInfo={pkmInfo} />}</section>
     </section>
   </main>
 }
@@ -693,7 +814,7 @@ function WilayahPage({ kelurahan, rw, rt, setKelurahan, setRw, setRt }: { kelura
     </section>
   }
   
-  return <section className="master-page"><div className="page-heading"><div><p className="eyebrow">DATA MASTER</p><h1>Data Wilayah</h1><p>Kelola Kelurahan, RW, dan RT dengan hubungan wilayah yang terjaga.</p></div><button className="primary" onClick={() => openForm()} type="button">+ Tambah {level}</button></div><div className="region-tabs">{(['kelurahan', 'rw', 'rt'] as RegionLevel[]).map((tab) => <button className={level === tab ? 'active' : ''} key={tab} onClick={() => { setLevel(tab); setFormOpen(false) }} type="button">{tab.toUpperCase()} <span>{tab === 'kelurahan' ? kelurahan.length : tab === 'rw' ? rw.length : rt.length}</span></button>)}</div>{formOpen && <form className="region-form" onSubmit={save}><strong>{editing ? 'Edit' : 'Tambah'} {level}</strong><div className="region-form-fields"><label>Nama {level}<input name="name" defaultValue={editing?.name} placeholder={level === 'kelurahan' ? 'Nama kelurahan' : 'Contoh: 05'} required /></label>{level === 'kelurahan' && <label>Kode wilayah<input name="code" defaultValue={editing?.code} placeholder="Kode kelurahan" required /></label>}{level === 'rw' && <label>Kelurahan<select value={parentId} onChange={(event) => setParentId(event.target.value)} required><option value="">Pilih kelurahan</option>{kelurahan.map((parent) => <option key={parent.id} value={parent.id}>{parent.name}</option>)}</select></label>}{level === 'rt' && <><label>Kelurahan<select value={selectedKelurahanId} onChange={(event) => { setSelectedKelurahanId(event.target.value); setParentId('') }} required><option value="">Pilih kelurahan</option>{kelurahan.map((parent) => <option key={parent.id} value={parent.id}>{parent.name}</option>)}</select></label><label>RW<select value={parentId} onChange={(event) => setParentId(event.target.value)} disabled={!selectedKelurahanId} required><option value="">{selectedKelurahanId ? 'Pilih RW' : 'Pilih kelurahan terlebih dahulu'}</option>{parents.map((parent) => <option key={parent.id} value={parent.id}>RW {parent.name}</option>)}</select></label></>}</div><div className="form-actions"><button className="secondary" onClick={() => setFormOpen(false)} type="button">Batal</button><button className="primary" type="submit">Simpan</button></div></form>}<div className="region-list">{items.length === 0 ? <div className="empty-state"><span>⌘</span><h2>Belum ada data</h2><p>Tambahkan {level} untuk mulai membangun wilayah kerja.</p></div> : items.map((item) => <article className="region-row" key={item.id}><div><strong>{level === 'rw' ? `RW ${item.name}` : level === 'rt' ? `RT ${item.name}` : item.name}</strong><small>{level === 'kelurahan' ? `Kode: ${item.code}` : level === 'rt' ? rtLocation(item) : `Kelurahan: ${parentName(item)}`}</small></div><div className="row-actions"><button className="edit-button" onClick={() => openForm(item)} type="button">Edit</button><button className="delete-button" onClick={() => remove(item)} type="button">Hapus</button></div></article>)}</div></section>
+  return <section className="master-page"><div className="page-heading"><div><p className="eyebrow">DATA MASTER</p><h1>Data Wilayah</h1><p>Kelola Kelurahan, RW, dan RT dengan hubungan wilayah yang terjaga.</p></div><button className="primary" onClick={() => openForm()} type="button">+ Tambah {level}</button></div><div className="region-tabs">{(['kelurahan', 'rw', 'rt'] as RegionLevel[]).map((tab) => <button className={level === tab ? 'active' : ''} key={tab} onClick={() => { setLevel(tab); setFormOpen(false) }} type="button">{tab.toUpperCase()} <span>{tab === 'kelurahan' ? kelurahan.length : tab === 'rw' ? rw.length : rt.length}</span></button>)}</div>{formOpen && <form className="region-form" onSubmit={save}><strong>{editing ? 'Edit' : 'Tambah'} {level}</strong><div className="region-form-fields"><label>Nama {level}<input name="name" defaultValue={editing?.name} placeholder={level === 'kelurahan' ? 'Nama kelurahan' : 'Contoh: 05'} required /></label>{level === 'kelurahan' && <label>Kode wilayah<input name="code" defaultValue={editing?.code} placeholder="Kode kelurahan" required /></label>}{level === 'rw' && <label>Kelurahan<select value={parentId} onChange={(event) => setParentId(event.target.value)} required><option value="">Pilih kelurahan</option>{kelurahan.map((parent) => <option key={parent.id} value={parent.id}>{parent.name}</option>)}</select></label>}{level === 'rt' && <><label>Kelurahan<select value={selectedKelurahanId} onChange={(event) => { setSelectedKelurahanId(event.target.value); setParentId('') }} required><option value="">Pilih kelurahan</option>{kelurahan.map((parent) => <option key={parent.id} value={parent.id}>{parent.name}</option>)}</select></label><label>RW<select value={parentId} onChange={(event) => setParentId(event.target.value)} disabled={!selectedKelurahanId} required><option value="">{selectedKelurahanId ? 'Pilih RW' : 'Pilih kelurahan terlebih dahulu'}</option>{parents.map((parent) => <option key={parent.id} value={parent.id}>RW {parent.name}</option>)}</select></label></>}</div><div className="form-actions"><button className="secondary" onClick={() => setFormOpen(false)} type="button">Kembali</button><button className="primary" type="submit">Simpan</button></div></form>}<div className="region-list">{items.length === 0 ? <div className="empty-state"><span>⌘</span><h2>Belum ada data</h2><p>Tambahkan {level} untuk mulai membangun wilayah kerja.</p></div> : items.map((item) => <article className="region-row" key={item.id}><div><strong>{level === 'rw' ? `RW ${item.name}` : level === 'rt' ? `RT ${item.name}` : item.name}</strong><small>{level === 'kelurahan' ? `Kode: ${item.code}` : level === 'rt' ? rtLocation(item) : `Kelurahan: ${parentName(item)}`}</small></div><div className="row-actions"><button className="edit-button" onClick={() => openForm(item)} type="button">Edit</button><button className="delete-button" onClick={() => remove(item)} type="button">Hapus</button></div></article>)}</div></section>
 }
 
 function Dashboard({ view, setView, pkmInfo }: { view: View; setView: (view: View) => void; pkmInfo: PKMInfo | null }) {
@@ -1051,7 +1172,6 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
           <h1>{editing ? 'Edit' : 'Tambah'} Entry</h1>
           <p>Lengkapi data entry dengan kartu keluarga dan questionnaire.</p>
         </div>
-        <button className="primary" type="submit" disabled={submitting}>{submitting ? 'Menyimpan...' : 'Simpan'}</button>
       </div>
       {error && <div className="error-message">{error}</div>}
 
@@ -1184,8 +1304,9 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
         ))}
       </section>
 
-      <div style={{ display: 'flex', gap: '8px', marginTop: '16px' }}>
-        <button className="text-button" onClick={() => setFormOpen(false)} type="button">Batal</button>
+      <div className="form-actions" style={{ marginTop: '16px' }}>
+        <button className="secondary" onClick={() => setFormOpen(false)} type="button">Kembali</button>
+        <button className="primary" disabled={submitting} type="submit">{submitting ? 'Menyimpan...' : 'Simpan'}</button>
       </div>
     </form>}
 
@@ -1377,6 +1498,10 @@ function ProfilePage() {
       </div>
     </div>
 
+    <div className="form-actions" style={{ marginBottom: '16px' }}>
+      <button className="secondary" onClick={() => window.location.reload()} type="button">Kembali</button>
+    </div>
+
     {success && <div className="saved-note" style={{ background: '#dcfce7', color: '#166534', border: '1px solid #bbf7d0' }}>Profil PKM berhasil diperbarui!</div>}
     {error && <div className="error-message">{error}</div>}
 
@@ -1477,9 +1602,8 @@ function ProfilePage() {
   </section>
 }
 
-function LokasiPage({ kelurahan, rw, rt }: { kelurahan: Region[]; rw: Region[]; rt: Region[] }) {
-  const [locations, setLocations] = useState<Location[]>([])
-  const [loading, setLoading] = useState(true)
+function LokasiPage({ kelurahan, rw, rt, locations, reloadLocations }: { kelurahan: Region[]; rw: Region[]; rt: Region[]; locations: Location[]; reloadLocations: () => Promise<void> }) {
+  const [loading, setLoading] = useState(() => locations.length === 0)
   const [formOpen, setFormOpen] = useState(false)
   const [editing, setEditing] = useState<Location | null>(null)
   const [submitting, setSubmitting] = useState(false)
@@ -1487,53 +1611,55 @@ function LokasiPage({ kelurahan, rw, rt }: { kelurahan: Region[]; rw: Region[]; 
   const [selectedKelurahanId, setSelectedKelurahanId] = useState('')
   const [selectedRwId, setSelectedRwId] = useState('')
   const [selectedRtId, setSelectedRtId] = useState('')
-
-  async function loadLocations() {
-    if (!supabase) {
-      console.error('Supabase client not available for locations')
-      setLoading(false)
-      return
-    }
-    setLoading(true)
-    try {
-      console.log('Loading locations from database...')
-      const { data, error: loadError } = await supabase.from('locations').select('*').order('name')
-      console.log('Load locations result:', { data, error: loadError?.message, dataLength: data?.length })
-      
-      if (loadError) {
-        console.error('Error loading locations:', loadError)
-        setError(`Gagal memuat data lokasi: ${loadError.message}`)
-        setLoading(false)
-        return
+  
+  useEffect(() => {
+    let active = true
+    async function refresh() {
+      setLoading(true)
+      try {
+        await reloadLocations()
+      } catch (err) {
+        console.error('Unexpected error reloading locations:', err)
+        setError(`Terjadi kesalahan: ${err instanceof Error ? err.message : 'Unknown error'}`)
+      } finally {
+        if (active) setLoading(false)
       }
-      
-      if (!data || data.length === 0) {
-        console.log('No locations found in database')
-        setLocations([])
-        setLoading(false)
-        return
-      }
-      
-      setLocations((data as LocationRow[]).map(mapLocationRow))
-      console.log('Locations loaded successfully:', data.length)
-    } catch (err) {
-      console.error('Unexpected error in loadLocations:', err)
-      setError(`Terjadi kesalahan: ${err instanceof Error ? err.message : 'Unknown error'}`)
-    } finally {
-      setLoading(false)
     }
-  }
-
-  useEffect(() => { void loadLocations() }, [])
+    void refresh()
+    return () => { active = false }
+  }, [reloadLocations])
 
   function openForm(location?: Location) {
     setEditing(location ?? null)
     setError('')
-    setSelectedKelurahanId(location?.kelurahanId ?? '')
-    setSelectedRwId(location?.rwId ?? '')
-    setSelectedRtId(location?.rtId ?? '')
+    if (location) {
+      setSelectedKelurahanId(location.kelurahanId ?? '')
+      setSelectedRwId(location.rwId ?? '')
+      setSelectedRtId(location.rtId ?? '')
+    } else {
+      const defaultKelurahanId = kelurahan[0]?.id ?? ''
+      const defaultRwId = rw.find((item) => item.kelurahanId === defaultKelurahanId)?.id ?? ''
+      const defaultRtId = rt.find((item) => item.rwId === defaultRwId)?.id ?? ''
+      setSelectedKelurahanId(defaultKelurahanId)
+      setSelectedRwId(defaultRwId)
+      setSelectedRtId(defaultRtId)
+    }
     setFormOpen(true)
   }
+
+  // Auto-load default kelurahan/rw/rt untuk form baru (tanpa perlu refresh manual)
+  useEffect(() => {
+    if (!formOpen) return
+    if (editing) return
+    if (selectedKelurahanId) return
+    const defaultKelurahanId = kelurahan[0]?.id
+    if (!defaultKelurahanId) return
+    const defaultRwId = rw.find((item) => item.kelurahanId === defaultKelurahanId)?.id ?? ''
+    const defaultRtId = rt.find((item) => item.rwId === defaultRwId)?.id ?? ''
+    setSelectedKelurahanId(defaultKelurahanId)
+    setSelectedRwId(defaultRwId)
+    setSelectedRtId(defaultRtId)
+  }, [formOpen, editing, selectedKelurahanId, kelurahan, rw, rt])
 
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -1565,7 +1691,7 @@ function LokasiPage({ kelurahan, rw, rt }: { kelurahan: Region[]; rw: Region[]; 
       }
 
       setFormOpen(false)
-      void loadLocations()
+      await reloadLocations()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Gagal menyimpan lokasi')
     } finally {
@@ -1582,7 +1708,7 @@ function LokasiPage({ kelurahan, rw, rt }: { kelurahan: Region[]; rw: Region[]; 
       window.alert(`Gagal menghapus lokasi: ${error.message}`)
       return
     }
-    void loadLocations()
+    await reloadLocations()
   }
 
   const rwOptions = rw.filter((item) => item.kelurahanId === selectedKelurahanId)
@@ -1601,7 +1727,6 @@ function LokasiPage({ kelurahan, rw, rt }: { kelurahan: Region[]; rw: Region[]; 
           <h1>{editing ? 'Edit' : 'Tambah'} Lokasi</h1>
           <p>Lengkapi data lokasi untuk pemeriksaan air dan udara.</p>
         </div>
-        <button className="primary" disabled={submitting} type="submit">{submitting ? 'Menyimpan...' : 'Simpan'}</button>
       </div>
       {error && <div className="error-message">{error}</div>}
 
@@ -1675,7 +1800,7 @@ function LokasiPage({ kelurahan, rw, rt }: { kelurahan: Region[]; rw: Region[]; 
       </section>
 
       <div className="form-actions">
-        <button className="secondary" onClick={() => setFormOpen(false)} type="button">Batal</button>
+        <button className="secondary" onClick={() => setFormOpen(false)} type="button">Kembali</button>
         <button className="primary" disabled={submitting} type="submit">{submitting ? 'Menyimpan...' : 'Simpan'}</button>
       </div>
     </form>}
@@ -1724,7 +1849,7 @@ function LokasiPage({ kelurahan, rw, rt }: { kelurahan: Region[]; rw: Region[]; 
   </section>
 }
 
-function UjiAirPage({ profile, locations }: { profile: UserProfile | null; locations: Location[] }) {
+function UjiAirPage({ profile, locations, kelurahan }: { profile: UserProfile | null; locations: Location[]; kelurahan: Region[] }) {
   const [tests, setTests] = useState<WaterQualityTest[]>([])
   const [loading, setLoading] = useState(true)
   const [formOpen, setFormOpen] = useState(false)
@@ -1735,8 +1860,10 @@ function UjiAirPage({ profile, locations }: { profile: UserProfile | null; locat
   const [formData, setFormData] = useState({
     locationId: '',
     testDate: new Date().toISOString().split('T')[0],
-    temperatureValue: '',
-    temperatureUnit: 'C' as 'K' | 'C' | 'F' | 'R',
+    waterTemperatureValue: '',
+    waterTemperatureUnit: 'C' as 'K' | 'C' | 'F' | 'R',
+    airTemperatureValue: '',
+    airTemperatureUnit: 'C' as 'K' | 'C' | 'F' | 'R',
     tdsValue: '',
     turbidityValue: '',
     colorValue: '',
@@ -1754,6 +1881,25 @@ function UjiAirPage({ profile, locations }: { profile: UserProfile | null; locat
     coliformValue: '',
     notes: '',
   })
+
+  // Helper function to get location name and kelurahan
+  function getLocationInfo(locationId: string) {
+    const location = locations.find(l => l.id === locationId)
+    if (!location) return { name: 'Lokasi tidak ditemukan', kelurahanName: '-' }
+    const kelurahanData = kelurahan.find(k => k.id === location.kelurahanId)
+    return { 
+      name: location.name, 
+      kelurahanName: kelurahanData?.name || '-' 
+    }
+  }
+
+  function getDefaultLocationId() {
+    if (locations.length === 0) return ''
+    const preferred = profile?.kelurahanId
+      ? locations.find((l) => l.kelurahanId === profile.kelurahanId)
+      : undefined
+    return (preferred ?? locations[0]).id
+  }
 
   async function loadTests() {
     if (!supabase || !profile) {
@@ -1791,7 +1937,12 @@ function UjiAirPage({ profile, locations }: { profile: UserProfile | null; locat
     }
   }
 
-  useEffect(() => { void loadTests() }, [profile])
+  // Only load tests after both profile and locations are available
+  useEffect(() => {
+    if (profile && locations.length > 0) {
+      void loadTests()
+    }
+  }, [profile, locations, kelurahan])
 
   function openForm(test?: WaterQualityTest) {
     setEditing(test ?? null)
@@ -1800,8 +1951,11 @@ function UjiAirPage({ profile, locations }: { profile: UserProfile | null; locat
       setFormData({
         locationId: test.locationId,
         testDate: test.testDate,
-        temperatureValue: test.temperatureValue?.toString() || '',
-        temperatureUnit: test.temperatureUnit,
+        // Handle both new and old structure - if waterTemperatureValue doesn't exist, it might be in temperatureValue
+        waterTemperatureValue: test.waterTemperatureValue?.toString() || (test as any).temperatureValue?.toString() || '',
+        waterTemperatureUnit: test.waterTemperatureUnit || (test as any).temperatureUnit || 'C',
+        airTemperatureValue: test.airTemperatureValue?.toString() || '',
+        airTemperatureUnit: test.airTemperatureUnit || 'C',
         tdsValue: test.tdsValue?.toString() || '',
         turbidityValue: test.turbidityValue?.toString() || '',
         colorValue: test.colorValue || '',
@@ -1821,10 +1975,12 @@ function UjiAirPage({ profile, locations }: { profile: UserProfile | null; locat
       })
     } else {
       setFormData({
-        locationId: '',
+        locationId: getDefaultLocationId(),
         testDate: new Date().toISOString().split('T')[0],
-        temperatureValue: '',
-        temperatureUnit: 'C',
+        waterTemperatureValue: '',
+        waterTemperatureUnit: 'C',
+        airTemperatureValue: '',
+        airTemperatureUnit: 'C',
         tdsValue: '',
         turbidityValue: '',
         colorValue: '',
@@ -1846,6 +2002,16 @@ function UjiAirPage({ profile, locations }: { profile: UserProfile | null; locat
     setFormOpen(true)
   }
 
+  // Pastikan `lokasi` auto-terisi saat daftar lokasi selesai ter-load (tanpa refresh manual).
+  useEffect(() => {
+    if (!formOpen) return
+    if (editing) return
+    if (formData.locationId) return
+    const defaultId = getDefaultLocationId()
+    if (!defaultId) return
+    setFormData((prev) => ({ ...prev, locationId: defaultId }))
+  }, [formOpen, editing, formData.locationId, locations, profile?.kelurahanId])
+
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (!supabase || !profile) return
@@ -1853,13 +2019,28 @@ function UjiAirPage({ profile, locations }: { profile: UserProfile | null; locat
     setSubmitting(true)
     setError('')
 
+    // Validation: Check if all required fields are filled
+    if (!formData.locationId) {
+      setError('Lokasi harus dipilih')
+      setSubmitting(false)
+      return
+    }
+    if (!formData.testDate) {
+      setError('Tanggal uji harus diisi')
+      setSubmitting(false)
+      return
+    }
+
     try {
-      const payload = {
+      // Try with new column structure first
+      let payload = {
         location_id: formData.locationId,
         test_date: formData.testDate,
         officer_id: profile.id,
-        temperature_value: formData.temperatureValue ? parseFloat(formData.temperatureValue) : null,
-        temperature_unit: formData.temperatureUnit,
+        water_temperature_value: formData.waterTemperatureValue ? parseFloat(formData.waterTemperatureValue) : null,
+        water_temperature_unit: formData.waterTemperatureUnit,
+        air_temperature_value: formData.airTemperatureValue ? parseFloat(formData.airTemperatureValue) : null,
+        air_temperature_unit: formData.airTemperatureUnit,
         tds_value: formData.tdsValue ? parseFloat(formData.tdsValue) : null,
         turbidity_value: formData.turbidityValue ? parseFloat(formData.turbidityValue) : null,
         color_value: formData.colorValue || null,
@@ -1878,17 +2059,55 @@ function UjiAirPage({ profile, locations }: { profile: UserProfile | null; locat
         notes: formData.notes || null,
       }
 
+      let result
       if (editing) {
-        const { error: updateError } = await supabase.from('water_quality_tests').update(payload).eq('id', editing.id)
-        if (updateError) throw updateError
+        result = await supabase.from('water_quality_tests').update(payload).eq('id', editing.id)
       } else {
-        const { error: insertError } = await supabase.from('water_quality_tests').insert(payload)
-        if (insertError) throw insertError
+        result = await supabase.from('water_quality_tests').insert(payload)
       }
+
+      // If new columns don't exist, fall back to old structure
+      if (result.error && result.error.message.includes('column') && result.error.message.includes('does not exist')) {
+        console.log('New columns not found, using fallback to old structure')
+        
+        // Fallback to old column structure for backward compatibility
+        const fallbackPayload: any = {
+          location_id: formData.locationId,
+          test_date: formData.testDate,
+          officer_id: profile.id,
+          temperature_value: formData.waterTemperatureValue ? parseFloat(formData.waterTemperatureValue) : null,
+          temperature_unit: formData.waterTemperatureUnit,
+          tds_value: formData.tdsValue ? parseFloat(formData.tdsValue) : null,
+          turbidity_value: formData.turbidityValue ? parseFloat(formData.turbidityValue) : null,
+          color_value: formData.colorValue || null,
+          odor_value: formData.odorValue || null,
+          ph_value: formData.phValue ? parseFloat(formData.phValue) : null,
+          nitrite_value: formData.nitriteValue ? parseFloat(formData.nitriteValue) : null,
+          nitrate_value: formData.nitrateValue ? parseFloat(formData.nitrateValue) : null,
+          chromium_value: formData.chromiumValue ? parseFloat(formData.chromiumValue) : null,
+          iron_value: formData.ironValue ? parseFloat(formData.ironValue) : null,
+          manganese_value: formData.manganeseValue ? parseFloat(formData.manganeseValue) : null,
+          chlorine_value: formData.chlorineValue ? parseFloat(formData.chlorineValue) : null,
+          fluoride_value: formData.fluorideValue ? parseFloat(formData.fluorideValue) : null,
+          aluminum_value: formData.aluminumValue ? parseFloat(formData.aluminumValue) : null,
+          e_coli_value: formData.eColiValue ? parseFloat(formData.eColiValue) : null,
+          coliform_value: formData.coliformValue ? parseFloat(formData.coliformValue) : null,
+          notes: formData.notes || null,
+        }
+
+        if (editing) {
+          result = await supabase.from('water_quality_tests').update(fallbackPayload).eq('id', editing.id)
+        } else {
+          result = await supabase.from('water_quality_tests').insert(fallbackPayload)
+        }
+      }
+
+      if (result.error) throw result.error
 
       setFormOpen(false)
       void loadTests()
     } catch (err) {
+      console.error('Save error:', err)
       setError(err instanceof Error ? err.message : 'Gagal menyimpan hasil uji')
     } finally {
       setSubmitting(false)
@@ -1922,7 +2141,6 @@ function UjiAirPage({ profile, locations }: { profile: UserProfile | null; locat
           <h1>{editing ? 'Edit' : 'Tambah'} Uji Air</h1>
           <p>Lengkapi data hasil uji pemeriksaan air.</p>
         </div>
-        <button className="primary" type="submit" disabled={submitting}>{submitting ? 'Menyimpan...' : 'Simpan'}</button>
       </div>
       {error && <div className="error-message">{error}</div>}
 
@@ -1944,10 +2162,10 @@ function UjiAirPage({ profile, locations }: { profile: UserProfile | null; locat
       <section className="form-section">
         <h2>Fisik</h2>
         <div className="form-grid">
-          <label>Suhu
+          <label>Suhu Air
             <div className="inline-fields">
-              <input type="number" step="any" value={formData.temperatureValue} onChange={(e) => setFormData({ ...formData, temperatureValue: e.target.value })} placeholder="Nilai" />
-              <select value={formData.temperatureUnit} onChange={(e) => setFormData({ ...formData, temperatureUnit: e.target.value as 'K' | 'C' | 'F' | 'R' })}>
+              <input type="number" step="any" value={formData.waterTemperatureValue} onChange={(e) => setFormData({ ...formData, waterTemperatureValue: e.target.value })} placeholder="Nilai" />
+              <select value={formData.waterTemperatureUnit} onChange={(e) => setFormData({ ...formData, waterTemperatureUnit: e.target.value as 'K' | 'C' | 'F' | 'R' })}>
                 <option value="K">K</option>
                 <option value="C">C</option>
                 <option value="F">F</option>
@@ -1955,8 +2173,19 @@ function UjiAirPage({ profile, locations }: { profile: UserProfile | null; locat
               </select>
             </div>
           </label>
-          <label>TDS (mg/L)<input type="number" step="any" value={formData.tdsValue} onChange={(e) => setFormData({ ...formData, tdsValue: e.target.value })} placeholder="0" /></label>
-          <label>Kekeruhan (NTU)<input type="number" step="any" value={formData.turbidityValue} onChange={(e) => setFormData({ ...formData, turbidityValue: e.target.value })} placeholder="0" /></label>
+          <label>Suhu Udara
+            <div className="inline-fields">
+              <input type="number" step="any" value={formData.airTemperatureValue} onChange={(e) => setFormData({ ...formData, airTemperatureValue: e.target.value })} placeholder="Nilai" />
+              <select value={formData.airTemperatureUnit} onChange={(e) => setFormData({ ...formData, airTemperatureUnit: e.target.value as 'K' | 'C' | 'F' | 'R' })}>
+                <option value="K">K</option>
+                <option value="C">C</option>
+                <option value="F">F</option>
+                <option value="R">R</option>
+              </select>
+            </div>
+          </label>
+          <label>TDS (mg/L)<input value={formData.tdsValue} onChange={(e) => setFormData({ ...formData, tdsValue: e.target.value })} placeholder="0" /></label>
+          <label>Kekeruhan (NTU)<input value={formData.turbidityValue} onChange={(e) => setFormData({ ...formData, turbidityValue: e.target.value })} placeholder="0" /></label>
           <label>Warna (TCU)<input value={formData.colorValue} onChange={(e) => setFormData({ ...formData, colorValue: e.target.value })} placeholder="0" /></label>
           <label>Bau<input value={formData.odorValue} onChange={(e) => setFormData({ ...formData, odorValue: e.target.value })} placeholder="Tidak berbau" /></label>
         </div>
@@ -1965,23 +2194,23 @@ function UjiAirPage({ profile, locations }: { profile: UserProfile | null; locat
       <section className="form-section">
         <h2>Kimia</h2>
         <div className="form-grid">
-          <label>pH<input type="number" step="any" value={formData.phValue} onChange={(e) => setFormData({ ...formData, phValue: e.target.value })} placeholder="7" /></label>
-          <label>Nitrit (mg/L)<input type="number" step="any" value={formData.nitriteValue} onChange={(e) => setFormData({ ...formData, nitriteValue: e.target.value })} placeholder="0" /></label>
-          <label>Nitrat (mg/L)<input type="number" step="any" value={formData.nitrateValue} onChange={(e) => setFormData({ ...formData, nitrateValue: e.target.value })} placeholder="0" /></label>
-          <label>Chromium (mg/L)<input type="number" step="any" value={formData.chromiumValue} onChange={(e) => setFormData({ ...formData, chromiumValue: e.target.value })} placeholder="0" /></label>
-          <label>Besi (mg/L)<input type="number" step="any" value={formData.ironValue} onChange={(e) => setFormData({ ...formData, ironValue: e.target.value })} placeholder="0" /></label>
-          <label>Mangan (mg/L)<input type="number" step="any" value={formData.manganeseValue} onChange={(e) => setFormData({ ...formData, manganeseValue: e.target.value })} placeholder="0" /></label>
-          <label>Chlorine (mg/L)<input type="number" step="any" value={formData.chlorineValue} onChange={(e) => setFormData({ ...formData, chlorineValue: e.target.value })} placeholder="0" /></label>
-          <label>Fluorida (mg/L)<input type="number" step="any" value={formData.fluorideValue} onChange={(e) => setFormData({ ...formData, fluorideValue: e.target.value })} placeholder="0" /></label>
-          <label>Aluminium (mg/L)<input type="number" step="any" value={formData.aluminumValue} onChange={(e) => setFormData({ ...formData, aluminumValue: e.target.value })} placeholder="0" /></label>
+          <label>pH<input value={formData.phValue} onChange={(e) => setFormData({ ...formData, phValue: e.target.value })} placeholder="7" /></label>
+          <label>Nitrit (mg/L)<input value={formData.nitriteValue} onChange={(e) => setFormData({ ...formData, nitriteValue: e.target.value })} placeholder="0" /></label>
+          <label>Nitrat (mg/L)<input value={formData.nitrateValue} onChange={(e) => setFormData({ ...formData, nitrateValue: e.target.value })} placeholder="0" /></label>
+          <label>Chromium (mg/L)<input value={formData.chromiumValue} onChange={(e) => setFormData({ ...formData, chromiumValue: e.target.value })} placeholder="0" /></label>
+          <label>Besi (mg/L)<input value={formData.ironValue} onChange={(e) => setFormData({ ...formData, ironValue: e.target.value })} placeholder="0" /></label>
+          <label>Mangan (mg/L)<input value={formData.manganeseValue} onChange={(e) => setFormData({ ...formData, manganeseValue: e.target.value })} placeholder="0" /></label>
+          <label>Chlorine (mg/L)<input value={formData.chlorineValue} onChange={(e) => setFormData({ ...formData, chlorineValue: e.target.value })} placeholder="0" /></label>
+          <label>Fluorida (mg/L)<input value={formData.fluorideValue} onChange={(e) => setFormData({ ...formData, fluorideValue: e.target.value })} placeholder="0" /></label>
+          <label>Aluminium (mg/L)<input value={formData.aluminumValue} onChange={(e) => setFormData({ ...formData, aluminumValue: e.target.value })} placeholder="0" /></label>
         </div>
       </section>
 
       <section className="form-section">
         <h2>Mikrobiologi</h2>
         <div className="form-grid">
-          <label>E-coli (MPN/100ml)<input type="number" step="any" value={formData.eColiValue} onChange={(e) => setFormData({ ...formData, eColiValue: e.target.value })} placeholder="0" /></label>
-          <label>Coliform (MPN/100ml)<input type="number" step="any" value={formData.coliformValue} onChange={(e) => setFormData({ ...formData, coliformValue: e.target.value })} placeholder="0" /></label>
+          <label>E-coli (MPN/100ml)<input value={formData.eColiValue} onChange={(e) => setFormData({ ...formData, eColiValue: e.target.value })} placeholder="0" /></label>
+          <label>Coliform (MPN/100ml)<input value={formData.coliformValue} onChange={(e) => setFormData({ ...formData, coliformValue: e.target.value })} placeholder="0" /></label>
         </div>
       </section>
 
@@ -1990,8 +2219,9 @@ function UjiAirPage({ profile, locations }: { profile: UserProfile | null; locat
         <label className="wide">Catatan<textarea value={formData.notes} onChange={(e) => setFormData({ ...formData, notes: e.target.value })} rows={2} placeholder="Catatan..." /></label>
       </section>
 
-      <div style={{ display: 'flex', gap: '8px', marginTop: '16px' }}>
-        <button className="text-button" onClick={() => setFormOpen(false)} type="button">Batal</button>
+      <div className="form-actions" style={{ marginTop: '16px' }}>
+        <button className="secondary" onClick={() => setFormOpen(false)} type="button">Kembali</button>
+        <button className="primary" disabled={submitting} type="submit">{submitting ? 'Menyimpan...' : 'Simpan'}</button>
       </div>
     </form>}
 
@@ -2004,32 +2234,61 @@ function UjiAirPage({ profile, locations }: { profile: UserProfile | null; locat
             <tr>
               <th>Lokasi</th>
               <th>Tanggal Uji</th>
-              <th>Suhu</th>
-              <th>pH</th>
+              <th>Suhu Air</th>
+              <th>Suhu Udara</th>
+              <th>Warna</th>
+              <th>Bau</th>
               <th>TDS</th>
               <th>Kekeruhan</th>
+              <th>pH</th>
+              <th>Nitrit</th>
+              <th>Nitrat</th>
+              <th>Chromium</th>
+              <th>Besi</th>
+              <th>Mangan</th>
+              <th>Chlorine</th>
+              <th>Fluorida</th>
+              <th>Aluminium</th>
               <th>E-coli</th>
+              <th>Coliform</th>
+              <th>Catatan</th>
               <th>Aksi</th>
             </tr>
           </thead>
           <tbody>
-            {tests.map(test => (
-              <tr key={test.id}>
-                <td><strong>{locations.find(l => l.id === test.locationId)?.name || 'Unknown'}</strong></td>
-                <td>{test.testDate}</td>
-                <td>{test.temperatureValue}{test.temperatureUnit}</td>
-                <td>{test.phValue || '-'}</td>
-                <td>{test.tdsValue || '-'}</td>
-                <td>{test.turbidityValue || '-'}</td>
-                <td>{test.eColiValue || '-'}</td>
-                <td>
-                  <div className="entry-actions">
-                    <button className="text-button" onClick={() => openForm(test)} type="button">Edit</button>
-                    <button className="text-button" onClick={() => remove(test)} type="button">Hapus</button>
-                  </div>
-                </td>
-              </tr>
-            ))}
+            {tests.map(test => {
+              const locationInfo = getLocationInfo(test.locationId)
+              return (
+                <tr key={test.id}>
+                  <td><strong>{locationInfo.name}</strong>{locationInfo.kelurahanName && <> <br /><small>{locationInfo.kelurahanName}</small></>}</td>
+                  <td>{test.testDate}</td>
+                  <td>{formatWaterValue(test.waterTemperatureValue, test.waterTemperatureUnit)}</td>
+                  <td>{formatWaterValue(test.airTemperatureValue, test.airTemperatureUnit)}</td>
+                  <td>{test.colorValue || '0'}</td>
+                  <td>{test.odorValue || '0'}</td>
+                  <td>{formatWaterValue(test.tdsValue)}</td>
+                  <td>{formatWaterValue(test.turbidityValue)}</td>
+                  <td>{formatWaterValue(test.phValue)}</td>
+                  <td>{formatWaterValue(test.nitriteValue)}</td>
+                  <td>{formatWaterValue(test.nitrateValue)}</td>
+                  <td>{formatWaterValue(test.chromiumValue)}</td>
+                  <td>{formatWaterValue(test.ironValue)}</td>
+                  <td>{formatWaterValue(test.manganeseValue)}</td>
+                  <td>{formatWaterValue(test.chlorineValue)}</td>
+                  <td>{formatWaterValue(test.fluorideValue)}</td>
+                  <td>{formatWaterValue(test.aluminumValue)}</td>
+                  <td>{formatWaterValue(test.eColiValue)}</td>
+                  <td>{formatWaterValue(test.coliformValue)}</td>
+                  <td>{test.notes || '-'}</td>
+                  <td>
+                    <div className="entry-actions">
+                      <button className="text-button" onClick={() => openForm(test)} type="button">Edit</button>
+                      <button className="text-button" onClick={() => remove(test)} type="button">Hapus</button>
+                    </div>
+                  </td>
+                </tr>
+              )
+            })}
           </tbody>
         </table>
       </div>
@@ -2037,7 +2296,7 @@ function UjiAirPage({ profile, locations }: { profile: UserProfile | null; locat
   </section>
 }
 
-function UjiUdaraPage({ profile, locations }: { profile: UserProfile | null; locations: Location[] }) {
+function UjiUdaraPage({ profile, locations, kelurahan }: { profile: UserProfile | null; locations: Location[]; kelurahan: Region[] }) {
   const [tests, setTests] = useState<AirQualityTest[]>([])
   const [loading, setLoading] = useState(true)
   const [formOpen, setFormOpen] = useState(false)
@@ -2058,6 +2317,25 @@ function UjiUdaraPage({ profile, locations }: { profile: UserProfile | null; loc
     ventilationRate1: '', ventilationRate2: '', ventilationRate3: '',
     notes: '',
   })
+
+  // Helper function to get location name and kelurahan
+  function getLocationInfo(locationId: string) {
+    const location = locations.find(l => l.id === locationId)
+    if (!location) return { name: 'Lokasi tidak ditemukan', kelurahanName: '-' }
+    const kelurahanData = kelurahan.find(k => k.id === location.kelurahanId)
+    return { 
+      name: location.name, 
+      kelurahanName: kelurahanData?.name || '-' 
+    }
+  }
+
+  function getDefaultLocationId() {
+    if (locations.length === 0) return ''
+    const preferred = profile?.kelurahanId
+      ? locations.find((l) => l.kelurahanId === profile.kelurahanId)
+      : undefined
+    return (preferred ?? locations[0]).id
+  }
 
   async function loadTests() {
     if (!supabase || !profile) {
@@ -2095,7 +2373,12 @@ function UjiUdaraPage({ profile, locations }: { profile: UserProfile | null; loc
     }
   }
 
-  useEffect(() => { void loadTests() }, [profile])
+  // Only load tests after both profile and locations are available
+  useEffect(() => {
+    if (profile && locations.length > 0) {
+      void loadTests()
+    }
+  }, [profile, locations, kelurahan])
 
   function openForm(test?: AirQualityTest) {
     setEditing(test ?? null)
@@ -2130,7 +2413,7 @@ function UjiUdaraPage({ profile, locations }: { profile: UserProfile | null; loc
       })
     } else {
       setFormData({
-        locationId: '',
+        locationId: getDefaultLocationId(),
         testDate: new Date().toISOString().split('T')[0],
         temperature1: '', temperature2: '', temperature3: '',
         temperatureUnit: 'C',
@@ -2146,12 +2429,34 @@ function UjiUdaraPage({ profile, locations }: { profile: UserProfile | null; loc
     setFormOpen(true)
   }
 
+  // Pastikan `lokasi` auto-terisi saat daftar lokasi selesai ter-load (tanpa refresh manual).
+  useEffect(() => {
+    if (!formOpen) return
+    if (editing) return
+    if (formData.locationId) return
+    const defaultId = getDefaultLocationId()
+    if (!defaultId) return
+    setFormData((prev) => ({ ...prev, locationId: defaultId }))
+  }, [formOpen, editing, formData.locationId, locations, profile?.kelurahanId])
+
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (!supabase || !profile) return
     
     setSubmitting(true)
     setError('')
+
+    // Validation: Check if all required fields are filled
+    if (!formData.locationId) {
+      setError('Lokasi harus dipilih')
+      setSubmitting(false)
+      return
+    }
+    if (!formData.testDate) {
+      setError('Tanggal uji harus diisi')
+      setSubmitting(false)
+      return
+    }
 
     try {
       const payload = {
@@ -2183,17 +2488,19 @@ function UjiUdaraPage({ profile, locations }: { profile: UserProfile | null; loc
         notes: formData.notes || null,
       }
 
+      let result
       if (editing) {
-        const { error: updateError } = await supabase.from('air_quality_tests').update(payload).eq('id', editing.id)
-        if (updateError) throw updateError
+        result = await supabase.from('air_quality_tests').update(payload).eq('id', editing.id)
       } else {
-        const { error: insertError } = await supabase.from('air_quality_tests').insert(payload)
-        if (insertError) throw insertError
+        result = await supabase.from('air_quality_tests').insert(payload)
       }
+
+      if (result.error) throw result.error
 
       setFormOpen(false)
       void loadTests()
     } catch (err) {
+      console.error('Save error:', err)
       setError(err instanceof Error ? err.message : 'Gagal menyimpan hasil uji')
     } finally {
       setSubmitting(false)
@@ -2227,7 +2534,6 @@ function UjiUdaraPage({ profile, locations }: { profile: UserProfile | null; loc
           <h1>{editing ? 'Edit' : 'Tambah'} Uji Udara</h1>
           <p>Lengkapi data hasil uji kualitas udara.</p>
         </div>
-        <button className="primary" type="submit" disabled={submitting}>{submitting ? 'Menyimpan...' : 'Simpan'}</button>
       </div>
       {error && <div className="error-message">{error}</div>}
 
@@ -2251,9 +2557,9 @@ function UjiUdaraPage({ profile, locations }: { profile: UserProfile | null; loc
         <div className="form-grid">
           <label>Suhu (°C)
             <div className="inline-fields">
-              <input type="number" step="any" value={formData.temperature1} onChange={(e) => setFormData({ ...formData, temperature1: e.target.value })} placeholder="1" />
-              <input type="number" step="any" value={formData.temperature2} onChange={(e) => setFormData({ ...formData, temperature2: e.target.value })} placeholder="2" />
-              <input type="number" step="any" value={formData.temperature3} onChange={(e) => setFormData({ ...formData, temperature3: e.target.value })} placeholder="3" />
+              <input value={formData.temperature1} onChange={(e) => setFormData({ ...formData, temperature1: e.target.value })} placeholder="1" />
+              <input value={formData.temperature2} onChange={(e) => setFormData({ ...formData, temperature2: e.target.value })} placeholder="2" />
+              <input value={formData.temperature3} onChange={(e) => setFormData({ ...formData, temperature3: e.target.value })} placeholder="3" />
               <select value={formData.temperatureUnit} onChange={(e) => setFormData({ ...formData, temperatureUnit: e.target.value as 'K' | 'C' | 'F' | 'R' })}>
                 <option value="K">K</option>
                 <option value="C">C</option>
@@ -2264,44 +2570,44 @@ function UjiUdaraPage({ profile, locations }: { profile: UserProfile | null; loc
           </label>
           <label>Kelembapan (%)
             <div className="inline-fields">
-              <input type="number" step="any" value={formData.humidity1} onChange={(e) => setFormData({ ...formData, humidity1: e.target.value })} placeholder="1" />
-              <input type="number" step="any" value={formData.humidity2} onChange={(e) => setFormData({ ...formData, humidity2: e.target.value })} placeholder="2" />
-              <input type="number" step="any" value={formData.humidity3} onChange={(e) => setFormData({ ...formData, humidity3: e.target.value })} placeholder="3" />
+              <input value={formData.humidity1} onChange={(e) => setFormData({ ...formData, humidity1: e.target.value })} placeholder="1" />
+              <input value={formData.humidity2} onChange={(e) => setFormData({ ...formData, humidity2: e.target.value })} placeholder="2" />
+              <input value={formData.humidity3} onChange={(e) => setFormData({ ...formData, humidity3: e.target.value })} placeholder="3" />
             </div>
           </label>
           <label>Kebisingan (dB)
             <div className="inline-fields">
-              <input type="number" step="any" value={formData.noise1} onChange={(e) => setFormData({ ...formData, noise1: e.target.value })} placeholder="1" />
-              <input type="number" step="any" value={formData.noise2} onChange={(e) => setFormData({ ...formData, noise2: e.target.value })} placeholder="2" />
-              <input type="number" step="any" value={formData.noise3} onChange={(e) => setFormData({ ...formData, noise3: e.target.value })} placeholder="3" />
+              <input value={formData.noise1} onChange={(e) => setFormData({ ...formData, noise1: e.target.value })} placeholder="1" />
+              <input value={formData.noise2} onChange={(e) => setFormData({ ...formData, noise2: e.target.value })} placeholder="2" />
+              <input value={formData.noise3} onChange={(e) => setFormData({ ...formData, noise3: e.target.value })} placeholder="3" />
             </div>
           </label>
           <label>Pencahayaan (lux)
             <div className="inline-fields">
-              <input type="number" step="any" value={formData.lighting1} onChange={(e) => setFormData({ ...formData, lighting1: e.target.value })} placeholder="1" />
-              <input type="number" step="any" value={formData.lighting2} onChange={(e) => setFormData({ ...formData, lighting2: e.target.value })} placeholder="2" />
-              <input type="number" step="any" value={formData.lighting3} onChange={(e) => setFormData({ ...formData, lighting3: e.target.value })} placeholder="3" />
+              <input value={formData.lighting1} onChange={(e) => setFormData({ ...formData, lighting1: e.target.value })} placeholder="1" />
+              <input value={formData.lighting2} onChange={(e) => setFormData({ ...formData, lighting2: e.target.value })} placeholder="2" />
+              <input value={formData.lighting3} onChange={(e) => setFormData({ ...formData, lighting3: e.target.value })} placeholder="3" />
             </div>
           </label>
           <label>PM 2.5 (µg/m³)
             <div className="inline-fields">
-              <input type="number" step="any" value={formData.pm25_1} onChange={(e) => setFormData({ ...formData, pm25_1: e.target.value })} placeholder="1" />
-              <input type="number" step="any" value={formData.pm25_2} onChange={(e) => setFormData({ ...formData, pm25_2: e.target.value })} placeholder="2" />
-              <input type="number" step="any" value={formData.pm25_3} onChange={(e) => setFormData({ ...formData, pm25_3: e.target.value })} placeholder="3" />
+              <input value={formData.pm25_1} onChange={(e) => setFormData({ ...formData, pm25_1: e.target.value })} placeholder="1" />
+              <input value={formData.pm25_2} onChange={(e) => setFormData({ ...formData, pm25_2: e.target.value })} placeholder="2" />
+              <input value={formData.pm25_3} onChange={(e) => setFormData({ ...formData, pm25_3: e.target.value })} placeholder="3" />
             </div>
           </label>
           <label>PM 10 (µg/m³)
             <div className="inline-fields">
-              <input type="number" step="any" value={formData.pm10_1} onChange={(e) => setFormData({ ...formData, pm10_1: e.target.value })} placeholder="1" />
-              <input type="number" step="any" value={formData.pm10_2} onChange={(e) => setFormData({ ...formData, pm10_2: e.target.value })} placeholder="2" />
-              <input type="number" step="any" value={formData.pm10_3} onChange={(e) => setFormData({ ...formData, pm10_3: e.target.value })} placeholder="3" />
+              <input value={formData.pm10_1} onChange={(e) => setFormData({ ...formData, pm10_1: e.target.value })} placeholder="1" />
+              <input value={formData.pm10_2} onChange={(e) => setFormData({ ...formData, pm10_2: e.target.value })} placeholder="2" />
+              <input value={formData.pm10_3} onChange={(e) => setFormData({ ...formData, pm10_3: e.target.value })} placeholder="3" />
             </div>
           </label>
           <label>Ventilasi (m³/h)
             <div className="inline-fields">
-              <input type="number" step="any" value={formData.ventilationRate1} onChange={(e) => setFormData({ ...formData, ventilationRate1: e.target.value })} placeholder="1" />
-              <input type="number" step="any" value={formData.ventilationRate2} onChange={(e) => setFormData({ ...formData, ventilationRate2: e.target.value })} placeholder="2" />
-              <input type="number" step="any" value={formData.ventilationRate3} onChange={(e) => setFormData({ ...formData, ventilationRate3: e.target.value })} placeholder="3" />
+              <input value={formData.ventilationRate1} onChange={(e) => setFormData({ ...formData, ventilationRate1: e.target.value })} placeholder="1" />
+              <input value={formData.ventilationRate2} onChange={(e) => setFormData({ ...formData, ventilationRate2: e.target.value })} placeholder="2" />
+              <input value={formData.ventilationRate3} onChange={(e) => setFormData({ ...formData, ventilationRate3: e.target.value })} placeholder="3" />
             </div>
           </label>
         </div>
@@ -2312,8 +2618,9 @@ function UjiUdaraPage({ profile, locations }: { profile: UserProfile | null; loc
         <label className="wide">Catatan<textarea value={formData.notes} onChange={(e) => setFormData({ ...formData, notes: e.target.value })} rows={2} placeholder="Catatan..." /></label>
       </section>
 
-      <div style={{ display: 'flex', gap: '8px', marginTop: '16px' }}>
-        <button className="text-button" onClick={() => setFormOpen(false)} type="button">Batal</button>
+      <div className="form-actions" style={{ marginTop: '16px' }}>
+        <button className="secondary" onClick={() => setFormOpen(false)} type="button">Kembali</button>
+        <button className="primary" disabled={submitting} type="submit">{submitting ? 'Menyimpan...' : 'Simpan'}</button>
       </div>
     </form>}
 
@@ -2326,24 +2633,30 @@ function UjiUdaraPage({ profile, locations }: { profile: UserProfile | null; loc
             <tr>
               <th>Lokasi</th>
               <th>Tanggal Uji</th>
-              <th>Suhu</th>
-              <th>Kelembapan</th>
-              <th>Kebisingan</th>
-              <th>PM 2.5</th>
-              <th>PM 10</th>
+              <th>Suhu 1/2/3</th>
+              <th>Kelembapan 1/2/3</th>
+              <th>Kebisingan 1/2/3</th>
+              <th>Pencahayaan 1/2/3</th>
+              <th>PM 2.5 1/2/3</th>
+              <th>PM 10 1/2/3</th>
+              <th>Ventilasi 1/2/3</th>
               <th>Aksi</th>
             </tr>
           </thead>
           <tbody>
-            {tests.map(test => (
+            {tests.map(test => {
+              const locationInfo = getLocationInfo(test.locationId)
+              return (
               <tr key={test.id}>
-                <td><strong>{locations.find(l => l.id === test.locationId)?.name || 'Unknown'}</strong></td>
+                <td><strong>{locationInfo.name}</strong>{locationInfo.kelurahanName && <> <br /><small>{locationInfo.kelurahanName}</small></>}</td>
                 <td>{test.testDate}</td>
-                <td>{test.temperature1}{test.temperatureUnit}</td>
-                <td>{test.humidity1 || '-'}</td>
-                <td>{test.noise1 || '-'}</td>
-                <td>{test.pm25_1 || '-'}</td>
-                <td>{test.pm10_1 || '-'}</td>
+                <td>{test.temperature1 || 0}/{test.temperature2 || 0}/{test.temperature3 || 0}</td>
+                <td>{test.humidity1 || 0}/{test.humidity2 || 0}/{test.humidity3 || 0}</td>
+                <td>{test.noise1 || 0}/{test.noise2 || 0}/{test.noise3 || 0}</td>
+                <td>{test.lighting1 || 0}/{test.lighting2 || 0}/{test.lighting3 || 0}</td>
+                <td>{test.pm25_1 || 0}/{test.pm25_2 || 0}/{test.pm25_3 || 0}</td>
+                <td>{test.pm10_1 || 0}/{test.pm10_2 || 0}/{test.pm10_3 || 0}</td>
+                <td>{test.ventilationRate1 || 0}/{test.ventilationRate2 || 0}/{test.ventilationRate3 || 0}</td>
                 <td>
                   <div className="entry-actions">
                     <button className="text-button" onClick={() => openForm(test)} type="button">Edit</button>
@@ -2351,7 +2664,7 @@ function UjiUdaraPage({ profile, locations }: { profile: UserProfile | null; loc
                   </div>
                 </td>
               </tr>
-            ))}
+            )})}
           </tbody>
         </table>
       </div>
@@ -2602,7 +2915,7 @@ function PenggunaPage({ kelurahan, rw, rt, currentUserId }: { kelurahan: Region[
           <p><strong>Password:</strong> Akan digenerate otomatis (12 karakter) dan akan ditampilkan di daftar pengguna setelah user dibuat</p>
         </div>}
       </div>
-      <div className="form-actions"><button className="secondary" onClick={() => setFormOpen(false)} type="button">Batal</button><button className="primary" disabled={submitting} type="submit">{submitting ? 'Menyimpan…' : 'Simpan'}</button></div>
+      <div className="form-actions"><button className="secondary" onClick={() => setFormOpen(false)} type="button">Kembali</button><button className="primary" disabled={submitting} type="submit">{submitting ? 'Menyimpan…' : 'Simpan'}</button></div>
     </form>}
     <div className="region-list">
       {error && <div className="error-message" style={{ marginBottom: '16px' }}>{error}</div>}

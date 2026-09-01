@@ -43,7 +43,7 @@ Deno.serve(async (req) => {
         return json({ error: 'Data wajib belum lengkap' }, 400)
       }
       const { data: created, error: createError } = await admin.auth.admin.createUser({
-        email, password, email_confirm: true,
+        email, password, email_confirm: false,
       })
       if (createError || !created.user) return json({ error: createError?.message ?? 'Gagal membuat akun' }, 400)
 
@@ -53,6 +53,7 @@ Deno.serve(async (req) => {
         role: role === 'super_admin' ? 'super_admin' : 'kader',
         kelurahan_id: kelurahanId || null, rw_id: rwId || null, rt_id: rtId || null,
         module_access: moduleAccess || { entry: true, wilayah: true, pengguna: false },
+        is_temp_password: true,
       })
       if (profileError) {
         await admin.auth.admin.deleteUser(created.user.id)
@@ -88,6 +89,11 @@ Deno.serve(async (req) => {
         if (email) authUpdate.email = email
         const { error } = await admin.auth.admin.updateUserById(id, authUpdate)
         if (error) return json({ error: error.message }, 400)
+        
+        // Reset temp password flag when password is changed
+        if (password) {
+          await admin.from('profiles').update({ is_temp_password: false }).eq('id', id)
+        }
       }
       return json({ ok: true })
     }

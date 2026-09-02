@@ -2810,6 +2810,10 @@ function UjiAirPage({ profile, locations, kelurahan, waterTests, setWaterTests }
 
   if (loading) return <section className="master-page"><div className="empty-state"><span>💧</span><h2>Memuat data uji air…</h2></div></section>
 
+  // Nomor urut otomatis untuk field entry (tampil di form saja, tidak mengubah skema DB).
+  let entryNo = 0
+  const nextEntryNo = () => ++entryNo
+
   return <section className="master-page">
     <div className="page-heading">
       <div><p className="eyebrow">PEMERIKSAAN</p><h1>Hasil Uji Pemeriksaan Air</h1><p>Kelola hasil uji kualitas air dari berbagai lokasi.</p></div>
@@ -2850,18 +2854,7 @@ function UjiAirPage({ profile, locations, kelurahan, waterTests, setWaterTests }
       <section className="form-section">
         <h2>Fisik</h2>
         <div className="form-grid">
-          <label>Suhu Air
-            <div className="inline-fields">
-              <input type="text" inputMode="text" value={formData.waterTemperatureValue} onChange={(e) => setValidatedUjiValue('waterTemperatureValue', e.target.value)} placeholder="Angka/simbol: < > = + - /" />
-              <select value={formData.waterTemperatureUnit} onChange={(e) => setFormData({ ...formData, waterTemperatureUnit: e.target.value as 'K' | 'C' | 'F' | 'R' })}>
-                <option value="K">K</option>
-                <option value="C">C</option>
-                <option value="F">F</option>
-                <option value="R">R</option>
-              </select>
-            </div>
-          </label>
-          <label>Suhu Udara
+          <label><span className="entry-no">{nextEntryNo()}.</span> Suhu Udara
             <div className="inline-fields">
               <input type="text" inputMode="text" value={formData.airTemperatureValue} onChange={(e) => setValidatedUjiValue('airTemperatureValue', e.target.value)} placeholder="Angka/simbol: < > = + - /" />
               <select value={formData.airTemperatureUnit} onChange={(e) => setFormData({ ...formData, airTemperatureUnit: e.target.value as 'K' | 'C' | 'F' | 'R' })}>
@@ -2872,40 +2865,51 @@ function UjiAirPage({ profile, locations, kelurahan, waterTests, setWaterTests }
               </select>
             </div>
           </label>
-          <label>TDS (mg/L)<input value={formData.tdsValue} onChange={(e) => setValidatedUjiValue('tdsValue', e.target.value)} placeholder="Angka/simbol: < > = + - /" /></label>
-          <label>Kekeruhan (NTU)<input value={formData.turbidityValue} onChange={(e) => setValidatedUjiValue('turbidityValue', e.target.value)} placeholder="Angka/simbol: < > = + - /" /></label>
-          <label>Warna (TCU)<input value={formData.colorValue} onChange={(e) => setValidatedUjiValue('colorValue', e.target.value)} placeholder="Angka/simbol: < > = + - /" /></label>
-          <label>Bau<input value={formData.odorValue} onChange={(e) => setValidatedUjiValue('odorValue', e.target.value)} placeholder="Angka/simbol: < > = + - /" /></label>
+          <label><span className="entry-no">{nextEntryNo()}.</span> Suhu Air
+            <div className="inline-fields">
+              <input type="text" inputMode="text" value={formData.waterTemperatureValue} onChange={(e) => setValidatedUjiValue('waterTemperatureValue', e.target.value)} placeholder="Angka/simbol: < > = + - /" />
+              <select value={formData.waterTemperatureUnit} onChange={(e) => setFormData({ ...formData, waterTemperatureUnit: e.target.value as 'K' | 'C' | 'F' | 'R' })}>
+                <option value="K">K</option>
+                <option value="C">C</option>
+                <option value="F">F</option>
+                <option value="R">R</option>
+              </select>
+            </div>
+          </label>
+          <label><span className="entry-no">{nextEntryNo()}.</span> TDS (mg/L)<input value={formData.tdsValue} onChange={(e) => setValidatedUjiValue('tdsValue', e.target.value)} placeholder="Angka/simbol: < > = + - /" /></label>
+          <label><span className="entry-no">{nextEntryNo()}.</span> Kekeruhan (NTU)<input value={formData.turbidityValue} onChange={(e) => setValidatedUjiValue('turbidityValue', e.target.value)} placeholder="Angka/simbol: < > = + - /" /></label>
+          <label><span className="entry-no">{nextEntryNo()}.</span> Warna (TCU)<input value={formData.colorValue} onChange={(e) => setValidatedUjiValue('colorValue', e.target.value)} placeholder="Angka/simbol: < > = + - /" /></label>
+          <label><span className="entry-no">{nextEntryNo()}.</span> Bau<input value={formData.odorValue} onChange={(e) => setValidatedUjiValue('odorValue', e.target.value)} placeholder="Angka/simbol: < > = + - /" /></label>
         </div>
       </section>
 
       <section className="form-section">
         <h2>Kimia</h2>
         <div className="form-grid">
-          <label>pH<input value={formData.phValue} onChange={(e) => setValidatedUjiValue('phValue', e.target.value)} placeholder="Angka/simbol: < > = + - /" /></label>
-          <label>Nitrit (mg/L)<input value={formData.nitriteValue} onChange={(e) => setValidatedUjiValue('nitriteValue', e.target.value)} placeholder="Angka/simbol: < > = + - /" /></label>
-          <label>Nitrat (mg/L)<input value={formData.nitrateValue} onChange={(e) => setValidatedUjiValue('nitrateValue', e.target.value)} placeholder="Angka/simbol: < > = + - /" /></label>
-          <label>Chromium (mg/L)<input value={formData.chromiumValue} onChange={(e) => setValidatedUjiValue('chromiumValue', e.target.value)} placeholder="Angka/simbol: < > = + - /" /></label>
-          <label>Besi (mg/L)<input value={formData.ironValue} onChange={(e) => setValidatedUjiValue('ironValue', e.target.value)} placeholder="Angka/simbol: < > = + - /" /></label>
-          <label>Mangan (mg/L)<input value={formData.manganeseValue} onChange={(e) => setValidatedUjiValue('manganeseValue', e.target.value)} placeholder="Angka/simbol: < > = + - /" /></label>
-          <label>Chlorine (mg/L)<input value={formData.chlorineValue} onChange={(e) => setValidatedUjiValue('chlorineValue', e.target.value)} placeholder="Angka/simbol: < > = + - /" /></label>
-          <label>Fluorida (mg/L)<input value={formData.fluorideValue} onChange={(e) => setValidatedUjiValue('fluorideValue', e.target.value)} placeholder="Angka/simbol: < > = + - /" /></label>
-          <label>Aluminium (mg/L)<input value={formData.aluminumValue} onChange={(e) => setValidatedUjiValue('aluminumValue', e.target.value)} placeholder="Angka/simbol: < > = + - /" /></label>
+          <label><span className="entry-no">{nextEntryNo()}.</span> pH<input value={formData.phValue} onChange={(e) => setValidatedUjiValue('phValue', e.target.value)} placeholder="Angka/simbol: < > = + - /" /></label>
+          <label><span className="entry-no">{nextEntryNo()}.</span> Nitrit (mg/L)<input value={formData.nitriteValue} onChange={(e) => setValidatedUjiValue('nitriteValue', e.target.value)} placeholder="Angka/simbol: < > = + - /" /></label>
+          <label><span className="entry-no">{nextEntryNo()}.</span> Nitrat (mg/L)<input value={formData.nitrateValue} onChange={(e) => setValidatedUjiValue('nitrateValue', e.target.value)} placeholder="Angka/simbol: < > = + - /" /></label>
+          <label><span className="entry-no">{nextEntryNo()}.</span> Chromium (mg/L)<input value={formData.chromiumValue} onChange={(e) => setValidatedUjiValue('chromiumValue', e.target.value)} placeholder="Angka/simbol: < > = + - /" /></label>
+          <label><span className="entry-no">{nextEntryNo()}.</span> Besi (mg/L)<input value={formData.ironValue} onChange={(e) => setValidatedUjiValue('ironValue', e.target.value)} placeholder="Angka/simbol: < > = + - /" /></label>
+          <label><span className="entry-no">{nextEntryNo()}.</span> Mangan (mg/L)<input value={formData.manganeseValue} onChange={(e) => setValidatedUjiValue('manganeseValue', e.target.value)} placeholder="Angka/simbol: < > = + - /" /></label>
+          <label><span className="entry-no">{nextEntryNo()}.</span> Chlorine (mg/L)<input value={formData.chlorineValue} onChange={(e) => setValidatedUjiValue('chlorineValue', e.target.value)} placeholder="Angka/simbol: < > = + - /" /></label>
+          <label><span className="entry-no">{nextEntryNo()}.</span> Fluorida (mg/L)<input value={formData.fluorideValue} onChange={(e) => setValidatedUjiValue('fluorideValue', e.target.value)} placeholder="Angka/simbol: < > = + - /" /></label>
+          <label><span className="entry-no">{nextEntryNo()}.</span> Aluminium (mg/L)<input value={formData.aluminumValue} onChange={(e) => setValidatedUjiValue('aluminumValue', e.target.value)} placeholder="Angka/simbol: < > = + - /" /></label>
         </div>
       </section>
 
       <section className="form-section">
         <h2>Mikrobiologi</h2>
         <div className="form-grid">
-          <label>E-coli (MPN/100ml)<input value={formData.eColiValue} onChange={(e) => setValidatedUjiValue('eColiValue', e.target.value)} placeholder="Angka/simbol: < > = + - /" /></label>
-          <label>Coliform (MPN/100ml)<input value={formData.coliformValue} onChange={(e) => setValidatedUjiValue('coliformValue', e.target.value)} placeholder="Angka/simbol: < > = + - /" /></label>
+          <label><span className="entry-no">{nextEntryNo()}.</span> E-coli (MPN/100ml)<input value={formData.eColiValue} onChange={(e) => setValidatedUjiValue('eColiValue', e.target.value)} placeholder="Angka/simbol: < > = + - /" /></label>
+          <label><span className="entry-no">{nextEntryNo()}.</span> Coliform (MPN/100ml)<input value={formData.coliformValue} onChange={(e) => setValidatedUjiValue('coliformValue', e.target.value)} placeholder="Angka/simbol: < > = + - /" /></label>
         </div>
       </section>
 
       <section className="form-section">
         <h2>Catatan</h2>
         <div className="form-grid">
-          <label className="wide">Catatan<textarea className="notes-textarea" style={{ width: '100%', minHeight: '120px', height: '120px' }} value={formData.notes} onChange={(e) => setFormData({ ...formData, notes: e.target.value })} rows={5} placeholder="Catatan..." /></label>
+          <label className="wide"><span className="entry-no">{nextEntryNo()}.</span> Catatan<textarea className="notes-textarea" style={{ width: '100%', minHeight: '120px', height: '120px' }} value={formData.notes} onChange={(e) => setFormData({ ...formData, notes: e.target.value })} rows={5} placeholder="Catatan (bebas)..." /></label>
         </div>
       </section>
 
@@ -3467,7 +3471,7 @@ function UjiUdaraPage({ profile, locations, kelurahan, airTests, setAirTests }: 
           </div>
         </div>
         <div className="data-table-container">
-          <table className="data-table">
+          <table className="data-table uji-air-table">
           <thead>
             <tr>
               <th>Lokasi</th>

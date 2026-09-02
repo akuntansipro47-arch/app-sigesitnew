@@ -2778,7 +2778,7 @@ function UjiAirPage({ profile, locations, kelurahan, waterTests, setWaterTests }
 
       <section className="form-section">
         <h2>Catatan</h2>
-        <label className="wide">Catatan<textarea value={formData.notes} onChange={(e) => setFormData({ ...formData, notes: e.target.value })} rows={2} placeholder="Catatan..." /></label>
+        <label className="wide">Catatan<textarea className="notes-textarea" value={formData.notes} onChange={(e) => setFormData({ ...formData, notes: e.target.value })} rows={5} placeholder="Catatan..." /></label>
       </section>
 
       <div className="form-actions" style={{ marginTop: '16px' }}>
@@ -3244,7 +3244,7 @@ function UjiUdaraPage({ profile, locations, kelurahan, airTests, setAirTests }: 
 
       <section className="form-section">
         <h2>Catatan</h2>
-        <label className="wide">Catatan<textarea value={formData.notes} onChange={(e) => setFormData({ ...formData, notes: e.target.value })} rows={2} placeholder="Catatan..." /></label>
+        <label className="wide">Catatan<textarea className="notes-textarea" value={formData.notes} onChange={(e) => setFormData({ ...formData, notes: e.target.value })} rows={5} placeholder="Catatan..." /></label>
       </section>
 
       <div className="form-actions" style={{ marginTop: '16px' }}>

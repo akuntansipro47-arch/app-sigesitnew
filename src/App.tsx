@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import './App.css'
 import { supabase, supabaseConfigured } from './lib/supabase'
+import { exportToExcel } from './utils/exportExcel'
 
 type View = 'beranda' | 'entry' | 'wilayah' | 'pengguna' | 'profile' | 'lokasi' | 'uji_air' | 'uji_udara'
 type RegionLevel = 'kelurahan' | 'rw' | 'rt'
@@ -942,6 +943,26 @@ function WilayahPage({ kelurahan, rw, rt, setKelurahan, setRw, setRt }: { kelura
     const kelurahanItem = kelurahan.find((current) => current.id === rwItem?.kelurahanId)
     return `RW ${rwItem?.name ?? '-'} · Kelurahan: ${kelurahanItem?.name ?? '-'}`
   }
+
+  function exportExcel() {
+    if (items.length === 0) {
+      window.alert('Tidak ada data wilayah untuk diexport.')
+      return
+    }
+    const header = ['Nama Wilayah', 'Keterangan']
+    const rows = items.map((item) => {
+      const nama = level === 'rw' ? `RW ${item.name}` : level === 'rt' ? `RT ${item.name}` : item.name
+      const ket = level === 'kelurahan' ? `Kode: ${item.code}` : level === 'rt' ? rtLocation(item) : `Kelurahan: ${parentName(item)}`
+      return [nama, ket]
+    })
+    const today = new Date().toISOString().slice(0, 10)
+    exportToExcel({
+      fileName: `wilayah_${level}_${today}.xlsx`,
+      sheetName: `Wilayah ${level.toUpperCase()}`,
+      header,
+      rows,
+    })
+  }
   
   if (loading) {
     return <section className="master-page">
@@ -963,7 +984,10 @@ function WilayahPage({ kelurahan, rw, rt, setKelurahan, setRw, setRt }: { kelura
           <h1>Data Wilayah</h1>
           <p>Kelola Kelurahan, RW, dan RT dengan hubungan wilayah yang terjaga.</p>
         </div>
-        <button className="primary" onClick={() => openForm()} type="button">+ Tambah {level}</button>
+        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+          <button className="secondary" onClick={exportExcel} type="button">Export Excel</button>
+          <button className="primary" onClick={() => openForm()} type="button">+ Tambah {level}</button>
+        </div>
       </div>
 
       <div className="region-tabs">
@@ -2177,10 +2201,46 @@ function LokasiPage({ kelurahan, rw, rt, locations, reloadLocations }: { kelurah
     return true
   })
 
+  function exportExcel() {
+    if (filteredLocations.length === 0) {
+      window.alert('Tidak ada data lokasi untuk diexport.')
+      return
+    }
+    const header = ['No', 'Nama Lokasi', 'Kode', 'Alamat', 'Wilayah', 'Koordinat']
+    const rows = filteredLocations.map((location, index) => {
+      const wilayah =
+        `${kelurahan.find((k) => k.id === location.kelurahanId)?.name || '-'}` +
+        `${location.rwId ? ` · RW ${rw.find((r) => r.id === location.rwId)?.name || '-'}` : ''}` +
+        `${location.rtId ? ` · RT ${rt.find((r) => r.id === location.rtId)?.name || '-'}` : ''}`
+      const koordinat =
+        location.latitude && location.longitude
+          ? `${location.latitude}, ${location.longitude}`
+          : '-'
+      return [
+        index + 1,
+        location.name,
+        location.code || '-',
+        location.address || '-',
+        wilayah,
+        koordinat,
+      ]
+    })
+    const today = new Date().toISOString().slice(0, 10)
+    exportToExcel({
+      fileName: `lokasi_${today}.xlsx`,
+      sheetName: 'Lokasi',
+      header,
+      rows,
+    })
+  }
+
   return <section className="master-page">
     <div className="page-heading">
       <div><p className="eyebrow">DATA MASTER</p><h1>Data Lokasi</h1><p>Kelola lokasi untuk pemeriksaan air dan udara.</p></div>
-      <button className="primary" onClick={() => openForm()} type="button">+ Tambah Lokasi</button>
+      <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+        <button className="secondary" onClick={exportExcel} type="button">Export Excel</button>
+        <button className="primary" onClick={() => openForm()} type="button">+ Tambah Lokasi</button>
+      </div>
     </div>
 
     {!formOpen && (
@@ -2442,6 +2502,68 @@ function UjiAirPage({ profile, locations, kelurahan, waterTests, setWaterTests }
     }
   }
 
+  function exportExcel() {
+    if (filteredTests.length === 0) {
+      window.alert('Tidak ada data uji air untuk diexport.')
+      return
+    }
+    const header = [
+      'Lokasi',
+      'Tanggal Uji',
+      'Suhu Air',
+      'Suhu Udara',
+      'Warna',
+      'Bau',
+      'TDS',
+      'Kekeruhan',
+      'pH',
+      'Nitrit',
+      'Nitrat',
+      'Chromium',
+      'Besi',
+      'Mangan',
+      'Chlorine',
+      'Fluorida',
+      'Aluminium',
+      'E-coli',
+      'Coliform',
+      'Catatan',
+    ]
+    const rows = filteredTests.map((test) => {
+      const info = getLocationInfo(test.locationId)
+      const lokasiCell = info.kelurahanName ? `${info.name}\n${info.kelurahanName}` : info.name
+      return [
+        lokasiCell,
+        test.testDate,
+        formatWaterValue(test.waterTemperatureValue, test.waterTemperatureUnit),
+        formatWaterValue(test.airTemperatureValue, test.airTemperatureUnit),
+        formatWaterValue(test.colorValue),
+        formatWaterValue(test.odorValue),
+        formatWaterValue(test.tdsValue),
+        formatWaterValue(test.turbidityValue),
+        formatWaterValue(test.phValue),
+        formatWaterValue(test.nitriteValue),
+        formatWaterValue(test.nitrateValue),
+        formatWaterValue(test.chromiumValue),
+        formatWaterValue(test.ironValue),
+        formatWaterValue(test.manganeseValue),
+        formatWaterValue(test.chlorineValue),
+        formatWaterValue(test.fluorideValue),
+        formatWaterValue(test.aluminumValue),
+        formatWaterValue(test.eColiValue),
+        formatWaterValue(test.coliformValue),
+        test.notes ?? '',
+      ]
+    })
+    const today = new Date().toISOString().slice(0, 10)
+    exportToExcel({
+      fileName: `uji_air_${today}.xlsx`,
+      sheetName: 'Uji Air',
+      header,
+      rows,
+    })
+  }
+
   function getDefaultLocationId() {
     if (locations.length === 0) return ''
     const preferred = profile?.kelurahanId
@@ -2690,7 +2812,10 @@ function UjiAirPage({ profile, locations, kelurahan, waterTests, setWaterTests }
   return <section className="master-page">
     <div className="page-heading">
       <div><p className="eyebrow">PEMERIKSAAN</p><h1>Hasil Uji Pemeriksaan Air</h1><p>Kelola hasil uji kualitas air dari berbagai lokasi.</p></div>
-      <button className="primary" onClick={() => openForm()} type="button">+ Tambah Uji Air</button>
+      <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+        <button className="secondary" onClick={exportExcel} type="button" disabled={tests.length === 0}>Export Excel</button>
+        <button className="primary" onClick={() => openForm()} type="button">+ Tambah Uji Air</button>
+      </div>
     </div>
 
     {formOpen && <form className="entry-form compact-form" onSubmit={save}>
@@ -2957,6 +3082,46 @@ function UjiUdaraPage({ profile, locations, kelurahan, airTests, setAirTests }: 
     }
   }
 
+  function exportExcel() {
+    if (filteredTests.length === 0) {
+      window.alert('Tidak ada data uji udara untuk diexport.')
+      return
+    }
+    const header = [
+      'Lokasi',
+      'Tanggal Uji',
+      'Suhu 1/2/3',
+      'Kelembapan 1/2/3',
+      'Kebisingan 1/2/3',
+      'Pencahayaan 1/2/3',
+      'PM 2.5 1/2/3',
+      'PM 10 1/2/3',
+      'Ventilasi 1/2/3',
+    ]
+    const rows = filteredTests.map((test) => {
+      const info = getLocationInfo(test.locationId)
+      const lokasiCell = info.kelurahanName ? `${info.name}\n${info.kelurahanName}` : info.name
+      return [
+        lokasiCell,
+        test.testDate,
+        `${test.temperature1 || 0}/${test.temperature2 || 0}/${test.temperature3 || 0}`,
+        `${test.humidity1 || 0}/${test.humidity2 || 0}/${test.humidity3 || 0}`,
+        `${test.noise1 || 0}/${test.noise2 || 0}/${test.noise3 || 0}`,
+        `${test.lighting1 || 0}/${test.lighting2 || 0}/${test.lighting3 || 0}`,
+        `${test.pm25_1 || 0}/${test.pm25_2 || 0}/${test.pm25_3 || 0}`,
+        `${test.pm10_1 || 0}/${test.pm10_2 || 0}/${test.pm10_3 || 0}`,
+        `${test.ventilationRate1 || 0}/${test.ventilationRate2 || 0}/${test.ventilationRate3 || 0}`,
+      ]
+    })
+    const today = new Date().toISOString().slice(0, 10)
+    exportToExcel({
+      fileName: `uji_udara_${today}.xlsx`,
+      sheetName: 'Uji Udara',
+      header,
+      rows,
+    })
+  }
+
   function getDefaultLocationId() {
     if (locations.length === 0) return ''
     const preferred = profile?.kelurahanId
@@ -3152,7 +3317,10 @@ function UjiUdaraPage({ profile, locations, kelurahan, airTests, setAirTests }: 
   return <section className="master-page">
     <div className="page-heading">
       <div><p className="eyebrow">PEMERIKSAAN</p><h1>Hasil Uji Kualitas Udara</h1><p>Kelola hasil uji kualitas udara dari berbagai lokasi.</p></div>
-      <button className="primary" onClick={() => openForm()} type="button">+ Tambah Uji Udara</button>
+      <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+        <button className="secondary" onClick={exportExcel} type="button" disabled={tests.length === 0}>Export Excel</button>
+        <button className="primary" onClick={() => openForm()} type="button">+ Tambah Uji Udara</button>
+      </div>
     </div>
 
     {formOpen && <form className="entry-form compact-form" onSubmit={save}>

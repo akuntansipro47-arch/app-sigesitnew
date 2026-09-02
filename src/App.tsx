@@ -2466,8 +2466,8 @@ function UjiAirPage({ profile, locations, kelurahan, waterTests, setWaterTests }
   })
 
   const ujiAirEntryFields: Array<{ key: keyof typeof formData; label: string }> = [
-    { key: 'waterTemperatureValue', label: 'Suhu Air' },
     { key: 'airTemperatureValue', label: 'Suhu Udara' },
+    { key: 'waterTemperatureValue', label: 'Suhu Air' },
     { key: 'tdsValue', label: 'TDS (mg/L)' },
     { key: 'turbidityValue', label: 'Kekeruhan (NTU)' },
     { key: 'colorValue', label: 'Warna' },
@@ -2850,10 +2850,10 @@ function UjiAirPage({ profile, locations, kelurahan, waterTests, setWaterTests }
       <section className="form-section">
         <h2>Fisik</h2>
         <div className="form-grid">
-          <label>Suhu Air
+          <label>Suhu Udara
             <div className="inline-fields">
-              <input type="text" inputMode="text" value={formData.waterTemperatureValue} onChange={(e) => setValidatedUjiValue('waterTemperatureValue', e.target.value)} placeholder="Angka/simbol: < > = + - /" />
-              <select value={formData.waterTemperatureUnit} onChange={(e) => setFormData({ ...formData, waterTemperatureUnit: e.target.value as 'K' | 'C' | 'F' | 'R' })}>
+              <input type="text" inputMode="text" value={formData.airTemperatureValue} onChange={(e) => setValidatedUjiValue('airTemperatureValue', e.target.value)} placeholder="Angka/simbol: < > = + - /" />
+              <select value={formData.airTemperatureUnit} onChange={(e) => setFormData({ ...formData, airTemperatureUnit: e.target.value as 'K' | 'C' | 'F' | 'R' })}>
                 <option value="K">K</option>
                 <option value="C">C</option>
                 <option value="F">F</option>
@@ -2861,10 +2861,10 @@ function UjiAirPage({ profile, locations, kelurahan, waterTests, setWaterTests }
               </select>
             </div>
           </label>
-          <label>Suhu Udara
+          <label>Suhu Air
             <div className="inline-fields">
-              <input type="text" inputMode="text" value={formData.airTemperatureValue} onChange={(e) => setValidatedUjiValue('airTemperatureValue', e.target.value)} placeholder="Angka/simbol: < > = + - /" />
-              <select value={formData.airTemperatureUnit} onChange={(e) => setFormData({ ...formData, airTemperatureUnit: e.target.value as 'K' | 'C' | 'F' | 'R' })}>
+              <input type="text" inputMode="text" value={formData.waterTemperatureValue} onChange={(e) => setValidatedUjiValue('waterTemperatureValue', e.target.value)} placeholder="Angka/simbol: < > = + - /" />
+              <select value={formData.waterTemperatureUnit} onChange={(e) => setFormData({ ...formData, waterTemperatureUnit: e.target.value as 'K' | 'C' | 'F' | 'R' })}>
                 <option value="K">K</option>
                 <option value="C">C</option>
                 <option value="F">F</option>
@@ -2956,13 +2956,14 @@ function UjiAirPage({ profile, locations, kelurahan, waterTests, setWaterTests }
           </div>
         </div>
         <div className="data-table-container">
-          <table className="data-table">
+          <table className="data-table uji-air-table">
           <thead>
             <tr>
+              <th style={{ width: '50px' }}>No</th>
               <th>Lokasi</th>
               <th>Tanggal Uji</th>
-              <th>Suhu Air</th>
               <th>Suhu Udara</th>
+              <th>Suhu Air</th>
               <th>Warna</th>
               <th>Bau</th>
               <th>TDS</th>
@@ -2983,14 +2984,15 @@ function UjiAirPage({ profile, locations, kelurahan, waterTests, setWaterTests }
             </tr>
           </thead>
           <tbody>
-            {filteredTests.map(test => {
+            {filteredTests.map((test, index) => {
               const locationInfo = getLocationInfo(test.locationId)
               return (
                 <tr key={test.id}>
+                  <td style={{ textAlign: 'center', fontWeight: '600' }}>{index + 1}</td>
                   <td><strong>{locationInfo.name}</strong>{locationInfo.kelurahanName && <> <br /><small>{locationInfo.kelurahanName}</small></>}</td>
                   <td>{test.testDate}</td>
-                  <td className={isEmptyUjiAirValue(test.waterTemperatureValue) ? 'uji-empty-cell' : undefined}>{formatWaterValue(test.waterTemperatureValue, test.waterTemperatureUnit)}</td>
                   <td className={isEmptyUjiAirValue(test.airTemperatureValue) ? 'uji-empty-cell' : undefined}>{formatWaterValue(test.airTemperatureValue, test.airTemperatureUnit)}</td>
+                  <td className={isEmptyUjiAirValue(test.waterTemperatureValue) ? 'uji-empty-cell' : undefined}>{formatWaterValue(test.waterTemperatureValue, test.waterTemperatureUnit)}</td>
                   <td className={isEmptyUjiAirValue(test.colorValue) ? 'uji-empty-cell' : undefined}>{formatWaterValue(test.colorValue)}</td>
                   <td className={isEmptyUjiAirValue(test.odorValue) ? 'uji-empty-cell' : undefined}>{formatWaterValue(test.odorValue)}</td>
                   <td className={isEmptyUjiAirValue(test.tdsValue) ? 'uji-empty-cell' : undefined}>{formatWaterValue(test.tdsValue)}</td>

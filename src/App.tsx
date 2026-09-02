@@ -274,21 +274,47 @@ function mapWaterQualityTestRow(row: WaterQualityTestRow): WaterQualityTest {
   }
 }
 
-// Aturan baru: kolom entry Uji Air hanya boleh berisi angka atau simbol matematika:
-// <, >, =, +, -, /
-// Catatan dikecualikan (bebas).
-const ujiAirEntryPattern = /^[0-9<>=+\-\/]*$/
+// Aturan input kolom entry Uji Air (kecuali Catatan):
+// - default boleh kosong
+// - boleh angka bulat: 0,1,2,...
+// - boleh angka dengan separator ".":
+//   - desimal max 3 digit: 0.2, 0.20, 12.345 (max 3 digit setelah ".")
+//   - ribuan: 10.000, 1.000.000
+// - boleh 1 simbol matematika saja: <, >, =, +, -, /
+const ujiAirSymbolPattern = /^[<>=+\-\/]$/
+const ujiAirIntegerPattern = /^\d+$/
+const ujiAirDecimalPattern = /^\d+(\.\d{1,3})?$/
+const ujiAirThousandsPattern = /^\d{1,3}(\.\d{3})+$/
+
+// Partial (saat user sedang mengetik): izinkan digit + "." selama setiap grup max 3 digit
+// dan izinkan 1 simbol saja.
+const ujiAirPartialNumberPattern1 = /^\d+(\.\d{0,3})?$/
+const ujiAirPartialNumberPattern2 = /^\d{1,3}(\.\d{0,3})*$/
 
 function isEmptyUjiAirValue(value: unknown) {
   return value === null || value === undefined || value === ''
 }
 
 function isUjiAirValueValid(input: string, _mode: 'partial' | 'final') {
-  // mode tetap dipertahankan agar pemanggil lama tidak error,
-  // namun aturan validasinya sekarang sama untuk partial/final.
+  // mode tetap dipertahankan agar pemanggil lama tidak error.
   const next = input.replace(/\s+/g, '')
   if (next === '') return true
-  return ujiAirEntryPattern.test(next)
+
+  // Jika ada simbol, harus 1 karakter saja.
+  if (/[<>=+\-\/]/.test(next)) return ujiAirSymbolPattern.test(next)
+
+  // Selain simbol, berarti angka dengan "." opsional.
+  if (!/^\d+(\.\d+)*$/.test(next)) return false
+
+  if (_mode === 'partial') {
+    return ujiAirPartialNumberPattern1.test(next) || ujiAirPartialNumberPattern2.test(next)
+  }
+
+  return (
+    ujiAirIntegerPattern.test(next) ||
+    ujiAirDecimalPattern.test(next) ||
+    ujiAirThousandsPattern.test(next)
+  )
 }
 
 function toDbTextValue(input: string) {
@@ -2703,11 +2729,12 @@ function UjiAirPage({ profile, locations, kelurahan, waterTests, setWaterTests }
       return
     }
 
-    // Validasi input kolom entry (kecuali Catatan): hanya angka atau simbol matematika (<, >, =, +, -, /)
+    // Validasi input kolom entry (kecuali Catatan):
+    // angka bulat / desimal (maks 3 digit) / ribuan (10.000) / 1 simbol matematika (<, >, =, +, -, /)
     for (const field of ujiAirEntryFields) {
       const value = String(formData[field.key] ?? '')
       if (!isUjiAirValueValid(value, 'final')) {
-        setError(`Nilai ${field.label} hanya boleh berupa angka atau simbol (<, >, =, +, -, /).`)
+        setError(`Nilai ${field.label} hanya boleh berupa angka bulat, angka desimal (maks 3 digit), format ribuan (10.000), atau 1 simbol (<, >, =, +, -, /).`)
         setSubmitting(false)
         return
       }

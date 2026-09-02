@@ -167,7 +167,7 @@
 /* Indikator sel kosong (null/empty) khusus tampilan tabel Uji Air */
 .data-table td.uji-empty-cell {
   position: relative;
-  background: #fef9c3; /* kuning lembut */
+  background: #fce7f3; /* merah muda lembut */
 }
 .data-table td.uji-empty-cell::after {
   content: '';
@@ -177,6 +177,6 @@
   width: 8px;
   height: 8px;
   border-radius: 999px;
-  background: #f59e0b;
-  box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.2);
+  background: #db2777;
+  box-shadow: 0 0 0 2px rgba(219, 39, 119, 0.18);
 }

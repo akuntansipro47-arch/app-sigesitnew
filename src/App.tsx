@@ -274,18 +274,21 @@ function mapWaterQualityTestRow(row: WaterQualityTestRow): WaterQualityTest {
   }
 }
 
-const ujiAirValuePartialPattern = /^([<>])?\d*(?:[.,]\d*)?$/
-const ujiAirValueFinalPattern = /^([<>])?\d+(?:[.,]\d+)?$/
+// Aturan baru: kolom entry Uji Air hanya boleh berisi angka atau simbol matematika:
+// <, >, =, +, -, /
+// Catatan dikecualikan (bebas).
+const ujiAirEntryPattern = /^[0-9<>=+\-\/]*$/
 
 function isEmptyUjiAirValue(value: unknown) {
   return value === null || value === undefined || value === ''
 }
 
-function isUjiAirValueValid(input: string, mode: 'partial' | 'final') {
-  const trimmed = input.trim()
-  if (trimmed === '') return true
-  const pattern = mode === 'partial' ? ujiAirValuePartialPattern : ujiAirValueFinalPattern
-  return pattern.test(trimmed)
+function isUjiAirValueValid(input: string, _mode: 'partial' | 'final') {
+  // mode tetap dipertahankan agar pemanggil lama tidak error,
+  // namun aturan validasinya sekarang sama untuk partial/final.
+  const next = input.replace(/\s+/g, '')
+  if (next === '') return true
+  return ujiAirEntryPattern.test(next)
 }
 
 function toDbTextValue(input: string) {
@@ -293,23 +296,19 @@ function toDbTextValue(input: string) {
   return trimmed === '' ? null : trimmed
 }
 
-function toDbUjiAirValue(input: string): number | string | null {
+function toDbUjiAirValue(input: string): string | null {
   const trimmed = input.trim()
   if (trimmed === '') return null
-
-  // Simpan string apa adanya jika memakai operator > atau <
-  if (trimmed.startsWith('>') || trimmed.startsWith('<')) return trimmed
-
-  const normalized = trimmed.replace(',', '.')
-  const asNumber = Number(normalized)
-  if (!Number.isFinite(asNumber)) return null
-  return asNumber
+  // Simpan apa adanya agar tampilan tabel bisa benar-benar sama seperti input user
+  // (misalnya: "001", "<", ">/", dsb).
+  return trimmed
 }
 
 function formatWaterValue(value: number | string | null | undefined, unit?: string) {
-  if (isEmptyUjiAirValue(value)) return ''
+  // Rule tampilan: kosong/null -> tampilkan "-" (akan di-highlight via class uji-empty-cell)
+  if (isEmptyUjiAirValue(value)) return '-'
   const text = typeof value === 'number' ? String(value) : String(value).trim()
-  if (text === '') return ''
+  if (text === '') return '-'
   return unit ? `${text} ${unit}` : text
 }
 
@@ -2466,11 +2465,13 @@ function UjiAirPage({ profile, locations, kelurahan, waterTests, setWaterTests }
     notes: '',
   })
 
-  const ujiAirNumericFields: Array<{ key: keyof typeof formData; label: string }> = [
+  const ujiAirEntryFields: Array<{ key: keyof typeof formData; label: string }> = [
     { key: 'waterTemperatureValue', label: 'Suhu Air' },
     { key: 'airTemperatureValue', label: 'Suhu Udara' },
     { key: 'tdsValue', label: 'TDS (mg/L)' },
     { key: 'turbidityValue', label: 'Kekeruhan (NTU)' },
+    { key: 'colorValue', label: 'Warna' },
+    { key: 'odorValue', label: 'Bau' },
     { key: 'phValue', label: 'pH' },
     { key: 'nitriteValue', label: 'Nitrit (mg/L)' },
     { key: 'nitrateValue', label: 'Nitrat (mg/L)' },
@@ -2485,7 +2486,7 @@ function UjiAirPage({ profile, locations, kelurahan, waterTests, setWaterTests }
   ]
 
   function setValidatedUjiValue(key: keyof typeof formData, rawValue: string) {
-    // Hapus spasi agar user tidak bisa memasukkan " > 2 " yang membingungkan.
+    // Hapus spasi agar input konsisten (dan lebih mudah tervalidasi).
     const next = rawValue.replace(/\s+/g, '')
     if (!isUjiAirValueValid(next, 'partial')) return
     setFormData((prev) => ({ ...prev, [key]: next }))
@@ -2552,7 +2553,7 @@ function UjiAirPage({ profile, locations, kelurahan, waterTests, setWaterTests }
         formatWaterValue(test.aluminumValue),
         formatWaterValue(test.eColiValue),
         formatWaterValue(test.coliformValue),
-        test.notes ?? '',
+        formatWaterValue(test.notes),
       ]
     })
     const today = new Date().toISOString().slice(0, 10)
@@ -2702,11 +2703,11 @@ function UjiAirPage({ profile, locations, kelurahan, waterTests, setWaterTests }
       return
     }
 
-    // Validasi input: boleh kosong, atau angka, atau operator >/< diikuti angka (contoh: >2, <10)
-    for (const field of ujiAirNumericFields) {
+    // Validasi input kolom entry (kecuali Catatan): hanya angka atau simbol matematika (<, >, =, +, -, /)
+    for (const field of ujiAirEntryFields) {
       const value = String(formData[field.key] ?? '')
       if (!isUjiAirValueValid(value, 'final')) {
-        setError(`Nilai ${field.label} harus berupa angka atau operator (> / <) diikuti angka (contoh: >2, <10).`)
+        setError(`Nilai ${field.label} hanya boleh berupa angka atau simbol (<, >, =, +, -, /).`)
         setSubmitting(false)
         return
       }
@@ -2724,8 +2725,8 @@ function UjiAirPage({ profile, locations, kelurahan, waterTests, setWaterTests }
         air_temperature_unit: formData.airTemperatureUnit,
         tds_value: toDbUjiAirValue(formData.tdsValue),
         turbidity_value: toDbUjiAirValue(formData.turbidityValue),
-        color_value: toDbTextValue(formData.colorValue),
-        odor_value: toDbTextValue(formData.odorValue),
+        color_value: toDbUjiAirValue(formData.colorValue),
+        odor_value: toDbUjiAirValue(formData.odorValue),
         ph_value: toDbUjiAirValue(formData.phValue),
         nitrite_value: toDbUjiAirValue(formData.nitriteValue),
         nitrate_value: toDbUjiAirValue(formData.nitrateValue),
@@ -2760,8 +2761,8 @@ function UjiAirPage({ profile, locations, kelurahan, waterTests, setWaterTests }
           temperature_unit: formData.waterTemperatureUnit,
           tds_value: toDbUjiAirValue(formData.tdsValue),
           turbidity_value: toDbUjiAirValue(formData.turbidityValue),
-          color_value: toDbTextValue(formData.colorValue),
-          odor_value: toDbTextValue(formData.odorValue),
+          color_value: toDbUjiAirValue(formData.colorValue),
+          odor_value: toDbUjiAirValue(formData.odorValue),
           ph_value: toDbUjiAirValue(formData.phValue),
           nitrite_value: toDbUjiAirValue(formData.nitriteValue),
           nitrate_value: toDbUjiAirValue(formData.nitrateValue),
@@ -2851,7 +2852,7 @@ function UjiAirPage({ profile, locations, kelurahan, waterTests, setWaterTests }
         <div className="form-grid">
           <label>Suhu Air
             <div className="inline-fields">
-              <input type="text" inputMode="decimal" value={formData.waterTemperatureValue} onChange={(e) => setValidatedUjiValue('waterTemperatureValue', e.target.value)} placeholder="Nilai (contoh: 28, >30)" />
+              <input type="text" inputMode="text" value={formData.waterTemperatureValue} onChange={(e) => setValidatedUjiValue('waterTemperatureValue', e.target.value)} placeholder="Angka/simbol: < > = + - /" />
               <select value={formData.waterTemperatureUnit} onChange={(e) => setFormData({ ...formData, waterTemperatureUnit: e.target.value as 'K' | 'C' | 'F' | 'R' })}>
                 <option value="K">K</option>
                 <option value="C">C</option>
@@ -2862,7 +2863,7 @@ function UjiAirPage({ profile, locations, kelurahan, waterTests, setWaterTests }
           </label>
           <label>Suhu Udara
             <div className="inline-fields">
-              <input type="text" inputMode="decimal" value={formData.airTemperatureValue} onChange={(e) => setValidatedUjiValue('airTemperatureValue', e.target.value)} placeholder="Nilai (contoh: 29, <35)" />
+              <input type="text" inputMode="text" value={formData.airTemperatureValue} onChange={(e) => setValidatedUjiValue('airTemperatureValue', e.target.value)} placeholder="Angka/simbol: < > = + - /" />
               <select value={formData.airTemperatureUnit} onChange={(e) => setFormData({ ...formData, airTemperatureUnit: e.target.value as 'K' | 'C' | 'F' | 'R' })}>
                 <option value="K">K</option>
                 <option value="C">C</option>
@@ -2871,33 +2872,33 @@ function UjiAirPage({ profile, locations, kelurahan, waterTests, setWaterTests }
               </select>
             </div>
           </label>
-          <label>TDS (mg/L)<input value={formData.tdsValue} onChange={(e) => setValidatedUjiValue('tdsValue', e.target.value)} placeholder="0 / >2 / <10" /></label>
-          <label>Kekeruhan (NTU)<input value={formData.turbidityValue} onChange={(e) => setValidatedUjiValue('turbidityValue', e.target.value)} placeholder="0 / >2 / <10" /></label>
-          <label>Warna (TCU)<input value={formData.colorValue} onChange={(e) => setFormData({ ...formData, colorValue: e.target.value })} placeholder="0" /></label>
-          <label>Bau<input value={formData.odorValue} onChange={(e) => setFormData({ ...formData, odorValue: e.target.value })} placeholder="Tidak berbau" /></label>
+          <label>TDS (mg/L)<input value={formData.tdsValue} onChange={(e) => setValidatedUjiValue('tdsValue', e.target.value)} placeholder="Angka/simbol: < > = + - /" /></label>
+          <label>Kekeruhan (NTU)<input value={formData.turbidityValue} onChange={(e) => setValidatedUjiValue('turbidityValue', e.target.value)} placeholder="Angka/simbol: < > = + - /" /></label>
+          <label>Warna (TCU)<input value={formData.colorValue} onChange={(e) => setValidatedUjiValue('colorValue', e.target.value)} placeholder="Angka/simbol: < > = + - /" /></label>
+          <label>Bau<input value={formData.odorValue} onChange={(e) => setValidatedUjiValue('odorValue', e.target.value)} placeholder="Angka/simbol: < > = + - /" /></label>
         </div>
       </section>
 
       <section className="form-section">
         <h2>Kimia</h2>
         <div className="form-grid">
-          <label>pH<input value={formData.phValue} onChange={(e) => setValidatedUjiValue('phValue', e.target.value)} placeholder="7 / >7 / <7" /></label>
-          <label>Nitrit (mg/L)<input value={formData.nitriteValue} onChange={(e) => setValidatedUjiValue('nitriteValue', e.target.value)} placeholder="0 / >2 / <10" /></label>
-          <label>Nitrat (mg/L)<input value={formData.nitrateValue} onChange={(e) => setValidatedUjiValue('nitrateValue', e.target.value)} placeholder="0 / >2 / <10" /></label>
-          <label>Chromium (mg/L)<input value={formData.chromiumValue} onChange={(e) => setValidatedUjiValue('chromiumValue', e.target.value)} placeholder="0 / >2 / <10" /></label>
-          <label>Besi (mg/L)<input value={formData.ironValue} onChange={(e) => setValidatedUjiValue('ironValue', e.target.value)} placeholder="0 / >2 / <10" /></label>
-          <label>Mangan (mg/L)<input value={formData.manganeseValue} onChange={(e) => setValidatedUjiValue('manganeseValue', e.target.value)} placeholder="0 / >2 / <10" /></label>
-          <label>Chlorine (mg/L)<input value={formData.chlorineValue} onChange={(e) => setValidatedUjiValue('chlorineValue', e.target.value)} placeholder="0 / >2 / <10" /></label>
-          <label>Fluorida (mg/L)<input value={formData.fluorideValue} onChange={(e) => setValidatedUjiValue('fluorideValue', e.target.value)} placeholder="0 / >2 / <10" /></label>
-          <label>Aluminium (mg/L)<input value={formData.aluminumValue} onChange={(e) => setValidatedUjiValue('aluminumValue', e.target.value)} placeholder="0 / >2 / <10" /></label>
+          <label>pH<input value={formData.phValue} onChange={(e) => setValidatedUjiValue('phValue', e.target.value)} placeholder="Angka/simbol: < > = + - /" /></label>
+          <label>Nitrit (mg/L)<input value={formData.nitriteValue} onChange={(e) => setValidatedUjiValue('nitriteValue', e.target.value)} placeholder="Angka/simbol: < > = + - /" /></label>
+          <label>Nitrat (mg/L)<input value={formData.nitrateValue} onChange={(e) => setValidatedUjiValue('nitrateValue', e.target.value)} placeholder="Angka/simbol: < > = + - /" /></label>
+          <label>Chromium (mg/L)<input value={formData.chromiumValue} onChange={(e) => setValidatedUjiValue('chromiumValue', e.target.value)} placeholder="Angka/simbol: < > = + - /" /></label>
+          <label>Besi (mg/L)<input value={formData.ironValue} onChange={(e) => setValidatedUjiValue('ironValue', e.target.value)} placeholder="Angka/simbol: < > = + - /" /></label>
+          <label>Mangan (mg/L)<input value={formData.manganeseValue} onChange={(e) => setValidatedUjiValue('manganeseValue', e.target.value)} placeholder="Angka/simbol: < > = + - /" /></label>
+          <label>Chlorine (mg/L)<input value={formData.chlorineValue} onChange={(e) => setValidatedUjiValue('chlorineValue', e.target.value)} placeholder="Angka/simbol: < > = + - /" /></label>
+          <label>Fluorida (mg/L)<input value={formData.fluorideValue} onChange={(e) => setValidatedUjiValue('fluorideValue', e.target.value)} placeholder="Angka/simbol: < > = + - /" /></label>
+          <label>Aluminium (mg/L)<input value={formData.aluminumValue} onChange={(e) => setValidatedUjiValue('aluminumValue', e.target.value)} placeholder="Angka/simbol: < > = + - /" /></label>
         </div>
       </section>
 
       <section className="form-section">
         <h2>Mikrobiologi</h2>
         <div className="form-grid">
-          <label>E-coli (MPN/100ml)<input value={formData.eColiValue} onChange={(e) => setValidatedUjiValue('eColiValue', e.target.value)} placeholder="0 / >2 / <10" /></label>
-          <label>Coliform (MPN/100ml)<input value={formData.coliformValue} onChange={(e) => setValidatedUjiValue('coliformValue', e.target.value)} placeholder="0 / >2 / <10" /></label>
+          <label>E-coli (MPN/100ml)<input value={formData.eColiValue} onChange={(e) => setValidatedUjiValue('eColiValue', e.target.value)} placeholder="Angka/simbol: < > = + - /" /></label>
+          <label>Coliform (MPN/100ml)<input value={formData.coliformValue} onChange={(e) => setValidatedUjiValue('coliformValue', e.target.value)} placeholder="Angka/simbol: < > = + - /" /></label>
         </div>
       </section>
 
@@ -3005,7 +3006,7 @@ function UjiAirPage({ profile, locations, kelurahan, waterTests, setWaterTests }
                   <td className={isEmptyUjiAirValue(test.aluminumValue) ? 'uji-empty-cell' : undefined}>{formatWaterValue(test.aluminumValue)}</td>
                   <td className={isEmptyUjiAirValue(test.eColiValue) ? 'uji-empty-cell' : undefined}>{formatWaterValue(test.eColiValue)}</td>
                   <td className={isEmptyUjiAirValue(test.coliformValue) ? 'uji-empty-cell' : undefined}>{formatWaterValue(test.coliformValue)}</td>
-                  <td>{test.notes || '-'}</td>
+                  <td className={isEmptyUjiAirValue(test.notes) ? 'uji-empty-cell' : undefined}>{formatWaterValue(test.notes)}</td>
                   <td>
                     <div className="entry-actions">
                       <button className="text-button" onClick={() => openForm(test)} type="button">Edit</button>

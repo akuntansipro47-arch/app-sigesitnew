@@ -276,20 +276,11 @@ function mapWaterQualityTestRow(row: WaterQualityTestRow): WaterQualityTest {
 
 // Aturan input kolom entry Uji Air (kecuali Catatan):
 // - default boleh kosong
-// - boleh angka bulat: 0,1,2,...
-// - boleh angka dengan separator ".":
-//   - desimal max 3 digit: 0.2, 0.20, 12.345 (max 3 digit setelah ".")
-//   - ribuan: 10.000, 1.000.000
-// - boleh 1 simbol matematika saja: <, >, =, +, -, /
-const ujiAirSymbolPattern = /^[<>=+\-\/]$/
-const ujiAirIntegerPattern = /^\d+$/
-const ujiAirDecimalPattern = /^\d+(\.\d{1,3})?$/
-const ujiAirThousandsPattern = /^\d{1,3}(\.\d{3})+$/
-
-// Partial (saat user sedang mengetik): izinkan digit + "." selama setiap grup max 3 digit
-// dan izinkan 1 simbol saja.
-const ujiAirPartialNumberPattern1 = /^\d+(\.\d{0,3})?$/
-const ujiAirPartialNumberPattern2 = /^\d{1,3}(\.\d{0,3})*$/
+// - boleh angka, simbol perbandingan (<, >), dan tanda baca
+// - huruf alfabet A-Z / a-z ditolak
+// Parsing tetap disimpan sebagai string apa adanya agar input seperti "0,20", "10.000", "<0.5"
+// tidak berubah saat ditampilkan kembali di tabel.
+const ujiAirDisallowedAlphabetPattern = /[A-Za-z]/
 
 function isEmptyUjiAirValue(value: unknown) {
   return value === null || value === undefined || value === ''
@@ -299,22 +290,7 @@ function isUjiAirValueValid(input: string, _mode: 'partial' | 'final') {
   // mode tetap dipertahankan agar pemanggil lama tidak error.
   const next = input.replace(/\s+/g, '')
   if (next === '') return true
-
-  // Jika ada simbol, harus 1 karakter saja.
-  if (/[<>=+\-\/]/.test(next)) return ujiAirSymbolPattern.test(next)
-
-  // Selain simbol, berarti angka dengan "." opsional.
-  if (!/^\d+(\.\d+)*$/.test(next)) return false
-
-  if (_mode === 'partial') {
-    return ujiAirPartialNumberPattern1.test(next) || ujiAirPartialNumberPattern2.test(next)
-  }
-
-  return (
-    ujiAirIntegerPattern.test(next) ||
-    ujiAirDecimalPattern.test(next) ||
-    ujiAirThousandsPattern.test(next)
-  )
+  return !ujiAirDisallowedAlphabetPattern.test(next)
 }
 
 function toDbTextValue(input: string) {
@@ -2730,11 +2706,11 @@ function UjiAirPage({ profile, locations, kelurahan, waterTests, setWaterTests }
     }
 
     // Validasi input kolom entry (kecuali Catatan):
-    // angka bulat / desimal (maks 3 digit) / ribuan (10.000) / 1 simbol matematika (<, >, =, +, -, /)
+    // boleh angka, simbol perbandingan, dan tanda baca; huruf alfabet ditolak.
     for (const field of ujiAirEntryFields) {
       const value = String(formData[field.key] ?? '')
       if (!isUjiAirValueValid(value, 'final')) {
-        setError(`Nilai ${field.label} hanya boleh berupa angka bulat, angka desimal (maks 3 digit), format ribuan (10.000), atau 1 simbol (<, >, =, +, -, /).`)
+        setError(`Nilai ${field.label} boleh berisi angka, simbol (< atau >), dan tanda baca, tetapi tidak boleh mengandung huruf alfabet.`)
         setSubmitting(false)
         return
       }
@@ -2934,9 +2910,9 @@ function UjiAirPage({ profile, locations, kelurahan, waterTests, setWaterTests }
       </section>
 
       <section className="form-section">
-        <h2>Catatan</h2>
+        <h2>Catatan / Notes</h2>
         <div className="form-grid">
-          <label className="wide"><span className="entry-no">{nextEntryNo()}.</span> Catatan<textarea className="notes-textarea" style={{ width: '100%', minHeight: '120px', height: '120px' }} value={formData.notes} onChange={(e) => setFormData({ ...formData, notes: e.target.value })} rows={5} placeholder="Catatan (bebas)..." /></label>
+          <label className="wide"><span className="entry-no">{nextEntryNo()}.</span> Catatan / Notes<textarea className="notes-textarea" style={{ width: '100%', minHeight: '120px', height: '120px' }} value={formData.notes} onChange={(e) => setFormData({ ...formData, notes: e.target.value })} rows={5} placeholder="Catatan / Notes (bebas)..." /></label>
         </div>
       </section>
 
@@ -3009,7 +2985,7 @@ function UjiAirPage({ profile, locations, kelurahan, waterTests, setWaterTests }
               <th>Aluminium</th>
               <th>E-coli</th>
               <th>Coliform</th>
-              <th>Catatan</th>
+              <th>Catatan / Notes</th>
               <th>Aksi</th>
             </tr>
           </thead>

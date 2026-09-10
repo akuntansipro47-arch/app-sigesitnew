@@ -10,5 +10,6 @@ UPDATE public.food_inspection_results
 SET e_coli_result = samples->0->>'e_coli'
 WHERE samples IS NOT NULL
   AND jsonb_array_length(samples) > 0
-  AND samples->0->>'e_coli' IN ('Positif', 'Negatif')
-  AND e_coli_result IS NULL;
+    AND samples->0->>'e_coli' IN ('Positif', 'Negatif')
+      AND e_coli_result IS NULL;
+      

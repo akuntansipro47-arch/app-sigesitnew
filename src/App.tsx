@@ -422,10 +422,10 @@ function App() {
         const demoProfile: UserProfile = {
           id: 'demo-user-id',
           fullName: 'Demo User',
-          username: 'demo_user',
+          username: 'demo@sigesit.com',
           nik: '0000000000000001',
           phone: '081234567890',
-          email: 'demo@example.com',
+          email: 'demo@sigesit.com',
           role: 'super_admin',
           isActive: true,
           moduleAccess: {
@@ -5509,12 +5509,12 @@ function LoginPage({ onLoginSuccess }: { onLoginSuccess?: () => Promise<void> })
     const password = String(data.get('password') ?? '').trim()
     
     // Check for demo mode credentials
-    if (email === 'demo_user' && password === 'demo_pass123') {
+    if (email === 'demo@sigesit.com' && password === 'demo_pass123') {
       setSubmitting(true)
       // Store demo mode in localStorage
       try {
         localStorage.setItem('sigesit_demo_mode', 'true')
-        localStorage.setItem('sigesit_demo_user', 'demo_user')
+        localStorage.setItem('sigesit_demo_user', 'demo@sigesit.com')
       } catch (e) {
         console.error('Failed to store demo mode:', e)
       }
@@ -5566,7 +5566,7 @@ function LoginPage({ onLoginSuccess }: { onLoginSuccess?: () => Promise<void> })
       <h1>SIGESIT</h1>
       <p>Masuk untuk mengelola pendataan SADAKELING PKM PADASUKA - KOTA CIMAHI.</p>
       {error && <div className="auth-error">{error}</div>}
-      <label>User<input autoComplete="username" name="email" required type="email" /></label>
+      <label>User<input autoComplete="username" name="email" required type="text" /></label>
       <label>Kata sandi<div style={{ position: 'relative' }}>
         <input autoComplete="current-password" name="password" required type={showPassword ? 'text' : 'password'} style={{ width: '100%', paddingRight: '40px' }} />
         <button type="button" onClick={() => setShowPassword(!showPassword)} style={{ position: 'absolute', right: '8px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', padding: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center' }} aria-label={showPassword ? 'Sembunyikan password' : 'Tampilkan password'}>

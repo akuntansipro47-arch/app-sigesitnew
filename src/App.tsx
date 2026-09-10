@@ -358,6 +358,26 @@ function App() {
   const { t } = useTranslation()
   const orientation = useOrientation()
   const reloadLocations = useCallback(async () => {
+    if (isDemoMode) {
+      // In demo mode, load from localStorage
+      try {
+        const savedLocations = localStorage.getItem('sigesit_demo_locations')
+        if (savedLocations) {
+          const mapped = JSON.parse(savedLocations) as Location[]
+          mapped.sort((a, b) => a.name.localeCompare(b.name, 'id-ID', { numeric: true, sensitivity: 'base' }))
+          setLocations(mapped)
+          console.log('Demo mode: Locations loaded from localStorage:', mapped.length)
+        } else {
+          setLocations([])
+          console.log('Demo mode: No locations in localStorage')
+        }
+      } catch (err) {
+        console.error('Demo mode: Error loading locations from localStorage:', err)
+        setLocations([])
+      }
+      return
+    }
+
     if (!supabaseConfigured || !supabase) return
     try {
       console.log('Loading locations from database...')
@@ -382,7 +402,7 @@ function App() {
     } catch (err) {
       console.error('Unexpected error loading locations:', err)
     }
-  }, [])
+  }, [isDemoMode])
   const [pkmInfo, setPkmInfo] = useState<PKMInfo | null>(null)
   const [session, setSession] = useState<Session | null>(null)
   const [profile, setProfile] = useState<UserProfile | null>(null)
@@ -390,6 +410,122 @@ function App() {
   const [showChangePassword, setShowChangePassword] = useState(false)
   const [changePasswordError, setChangePasswordError] = useState('')
   const [changePasswordSubmitting, setChangePasswordSubmitting] = useState(false)
+  const [isDemoMode, setIsDemoMode] = useState(false)
+
+  // Check for demo mode on mount
+  useEffect(() => {
+    try {
+      const demoMode = localStorage.getItem('sigesit_demo_mode')
+      if (demoMode === 'true') {
+        setIsDemoMode(true)
+        // Set demo profile
+        const demoProfile: UserProfile = {
+          id: 'demo-user-id',
+          fullName: 'Demo User',
+          username: 'demo_user',
+          nik: '0000000000000001',
+          phone: '081234567890',
+          email: 'demo@example.com',
+          role: 'super_admin',
+          isActive: true,
+          moduleAccess: {
+            entry: true,
+            wilayah: true,
+            pengguna: true,
+            lokasi: true,
+            uji_air: true,
+            uji_udara: true,
+            pangan: true,
+            group_tpp: true
+          }
+        }
+        setProfile(demoProfile)
+        setAuthReady(true)
+        
+        // Load demo data from localStorage if available
+        loadDemoData()
+      }
+    } catch (e) {
+      console.error('Failed to check demo mode:', e)
+    }
+  }, [])
+
+  // Load demo data from localStorage
+  const loadDemoData = useCallback(() => {
+    try {
+      const savedLocations = localStorage.getItem('sigesit_demo_locations')
+      const savedWaterTests = localStorage.getItem('sigesit_demo_water_tests')
+      const savedAirTests = localStorage.getItem('sigesit_demo_air_tests')
+      const savedFoodInspections = localStorage.getItem('sigesit_demo_food_inspections')
+      const savedKelurahan = localStorage.getItem('sigesit_demo_kelurahan')
+      const savedRw = localStorage.getItem('sigesit_demo_rw')
+      const savedRt = localStorage.getItem('sigesit_demo_rt')
+
+      if (savedLocations) setLocations(JSON.parse(savedLocations))
+      if (savedWaterTests) setWaterTests(JSON.parse(savedWaterTests))
+      if (savedAirTests) setAirTests(JSON.parse(savedAirTests))
+      if (savedFoodInspections) setFoodInspections(JSON.parse(savedFoodInspections))
+      if (savedKelurahan) setKelurahan(JSON.parse(savedKelurahan))
+      if (savedRw) setRw(JSON.parse(savedRw))
+      if (savedRt) setRt(JSON.parse(savedRt))
+      setRegionsLoaded(true)
+    } catch (e) {
+      console.error('Failed to load demo data:', e)
+    }
+  }, [])
+
+  // Save demo data to localStorage
+  const saveDemoData = useCallback(() => {
+    if (!isDemoMode) return
+    try {
+      localStorage.setItem('sigesit_demo_locations', JSON.stringify(locations))
+      localStorage.setItem('sigesit_demo_water_tests', JSON.stringify(waterTests))
+      localStorage.setItem('sigesit_demo_air_tests', JSON.stringify(airTests))
+      localStorage.setItem('sigesit_demo_food_inspections', JSON.stringify(foodInspections))
+      localStorage.setItem('sigesit_demo_kelurahan', JSON.stringify(kelurahan))
+      localStorage.setItem('sigesit_demo_rw', JSON.stringify(rw))
+      localStorage.setItem('sigesit_demo_rt', JSON.stringify(rt))
+    } catch (e) {
+      console.error('Failed to save demo data:', e)
+    }
+  }, [isDemoMode, locations, waterTests, airTests, foodInspections, kelurahan, rw, rt])
+
+  // Clear demo data on logout
+  const clearDemoData = useCallback(() => {
+    try {
+      localStorage.removeItem('sigesit_demo_mode')
+      localStorage.removeItem('sigesit_demo_user')
+      localStorage.removeItem('sigesit_demo_locations')
+      localStorage.removeItem('sigesit_demo_water_tests')
+      localStorage.removeItem('sigesit_demo_air_tests')
+      localStorage.removeItem('sigesit_demo_food_inspections')
+      localStorage.removeItem('sigesit_demo_kelurahan')
+      localStorage.removeItem('sigesit_demo_rw')
+      localStorage.removeItem('sigesit_demo_rt')
+      setIsDemoMode(false)
+      setProfile(null)
+      window.location.reload()
+    } catch (e) {
+      console.error('Failed to clear demo data:', e)
+    }
+  }, [])
+
+  // Auto-save demo data when it changes
+  useEffect(() => {
+    if (isDemoMode) {
+      try {
+        localStorage.setItem('sigesit_demo_locations', JSON.stringify(locations))
+        localStorage.setItem('sigesit_demo_water_tests', JSON.stringify(waterTests))
+        localStorage.setItem('sigesit_demo_air_tests', JSON.stringify(airTests))
+        localStorage.setItem('sigesit_demo_food_inspections', JSON.stringify(foodInspections))
+        localStorage.setItem('sigesit_demo_kelurahan', JSON.stringify(kelurahan))
+        localStorage.setItem('sigesit_demo_rw', JSON.stringify(rw))
+        localStorage.setItem('sigesit_demo_rt', JSON.stringify(rt))
+      } catch (e) {
+        console.error('Failed to save demo data:', e)
+      }
+    }
+  }, [isDemoMode, locations, waterTests, airTests, foodInspections, kelurahan, rw, rt])
 
   async function handleChangePassword(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -721,8 +857,8 @@ function App() {
     void loadPKMInfo()
   }, [session])
 
-  if (supabaseConfigured && !authReady) return <main className="auth-shell"><p className="auth-loading">Memuat sesi…</p></main>
-  if (supabaseConfigured && !session) return <LoginPage onLoginSuccess={handleLoginSuccess} />
+  if (supabaseConfigured && !authReady && !isDemoMode) return <main className="auth-shell"><p className="auth-loading">Memuat sesi…</p></main>
+  if (supabaseConfigured && !session && !isDemoMode) return <LoginPage onLoginSuccess={handleLoginSuccess} />
 
   const displayName = profile?.fullName ?? 'Syifa Zahra'
   const initials = displayName.split(' ').map((part) => part[0]).slice(0, 2).join('').toUpperCase()
@@ -784,8 +920,44 @@ function App() {
         )}
         <div><strong>SIGESIT</strong><span>{pkmName}</span></div>
       </div>
-      <div className="topbar-actions"><button className={`connection ${online ? 'online' : 'offline'}`} onClick={() => setOnline(!online)} type="button"><i />{online ? 'Terhubung' : 'Offline'}</button><button className="avatar" type="button" aria-label={`Profil ${displayName}`}>{initials || 'SZ'}</button>{session && <button className="logout" onClick={() => { void supabase?.auth.signOut() }} type="button">Keluar</button>}</div>
+      <div className="topbar-actions"><button className={`connection ${online ? 'online' : 'offline'}`} onClick={() => setOnline(!online)} type="button"><i />{online ? 'Terhubung' : 'Offline'}</button><button className="avatar" type="button" aria-label={`Profil ${displayName}`}>{initials || 'SZ'}</button>{(session || isDemoMode) && <button className="logout" onClick={() => { if (isDemoMode) { clearDemoData() } else { void supabase?.auth.signOut() } }} type="button">Keluar</button>}</div>
     </header>
+    {isDemoMode && (
+      <div style={{
+        position: 'fixed',
+        top: '50%',
+        left: '50%',
+        transform: 'translate(-50%, -50%) rotate(-45deg)',
+        fontSize: '48px',
+        fontWeight: 'bold',
+        color: 'rgba(255, 0, 0, 0.15)',
+        pointerEvents: 'none',
+        zIndex: 9999,
+        whiteSpace: 'nowrap',
+        textShadow: '2px 2px 4px rgba(0,0,0,0.1)'
+      }}>
+        DEMO MODE
+      </div>
+    )}
+    {isDemoMode && (
+      <div style={{
+        position: 'fixed',
+        bottom: '20px',
+        right: '20px',
+        backgroundColor: 'rgba(255, 193, 7, 0.95)',
+        color: 'black',
+        padding: '12px 20px',
+        borderRadius: '8px',
+        fontWeight: 'bold',
+        boxShadow: '0 4px 6px rgba(0,0,0,0.1)',
+        zIndex: 10000,
+        maxWidth: '300px',
+        fontSize: '14px',
+        border: '2px solid #ff9800'
+      }}>
+        ⚠️ Mode Demo: Data tidak tersimpan di server
+      </div>
+    )}
     <section className="workspace">
       <aside className="sidebar">
         {pkmLogo && (
@@ -832,6 +1004,15 @@ function WilayahPage({ kelurahan, rw, rt, setKelurahan, setRw, setRt }: { kelura
   const [loading, setLoading] = useState(false)
   const [filterKelurahanId, setFilterKelurahanId] = useState('')
   const [filterRwId, setFilterRwId] = useState('')
+  
+  // Check demo mode
+  const isDemoMode = useMemo(() => {
+    try {
+      return localStorage.getItem('sigesit_demo_mode') === 'true'
+    } catch {
+      return false
+    }
+  }, [])
   const items = (() => {
     if (level === 'kelurahan') return kelurahan
     if (level === 'rw') return filterKelurahanId ? rw.filter((item) => item.kelurahanId === filterKelurahanId) : rw
@@ -852,6 +1033,28 @@ function WilayahPage({ kelurahan, rw, rt, setKelurahan, setRw, setRt }: { kelura
   // Reload data when switching to this view
   useEffect(() => {
     async function reloadRegions() {
+      if (isDemoMode) {
+        // In demo mode, load from localStorage
+        setLoading(true)
+        try {
+          console.log('Demo mode: Reloading regions from localStorage...')
+          const savedKelurahan = localStorage.getItem('sigesit_demo_kelurahan')
+          const savedRw = localStorage.getItem('sigesit_demo_rw')
+          const savedRt = localStorage.getItem('sigesit_demo_rt')
+
+          if (savedKelurahan) setKelurahan(JSON.parse(savedKelurahan))
+          if (savedRw) setRw(JSON.parse(savedRw))
+          if (savedRt) setRt(JSON.parse(savedRt))
+          
+          console.log('Demo mode: Regions reloaded successfully')
+        } catch (err) {
+          console.error('Demo mode: Error reloading regions:', err)
+        } finally {
+          setLoading(false)
+        }
+        return
+      }
+
       if (supabaseConfigured && supabase) {
         setLoading(true)
         try {
@@ -930,6 +1133,56 @@ function WilayahPage({ kelurahan, rw, rt, setKelurahan, setRw, setRt }: { kelura
     const code = String(data.get('code') ?? '').trim()
     if (!name || (level === 'rw' && !parentId) || (level === 'rt' && (!selectedKelurahanId || !parentId))) return
     let item: Region = { id: editing?.id ?? `${level}-${Date.now()}`, name, ...(level === 'kelurahan' ? { code } : level === 'rw' ? { kelurahanId: parentId } : { rwId: parentId }) }
+    
+    if (isDemoMode) {
+      // In demo mode, save to localStorage only
+      try {
+        if (level === 'kelurahan') {
+          const updatedKelurahan = editing ? kelurahan.map((current) => current.id === item.id ? item : current) : [...kelurahan, item]
+          setKelurahan(updatedKelurahan)
+          localStorage.setItem('sigesit_demo_kelurahan', JSON.stringify(updatedKelurahan))
+        } else if (level === 'rw') {
+          let updatedRw = editing ? rw.map((current) => current.id === item.id ? item : current) : [...rw, item]
+          updatedRw.sort((a, b) => {
+            const kelurahanA = kelurahan.find((k: { id: string; name: string; code?: string }) => k.id === a.kelurahanId)?.name || ''
+            const kelurahanB = kelurahan.find((k: { id: string; name: string; code?: string }) => k.id === b.kelurahanId)?.name || ''
+            if (kelurahanA !== kelurahanB) return kelurahanA.localeCompare(kelurahanB)
+            const numA = parseInt(a.name, 10) || 0
+            const numB = parseInt(b.name, 10) || 0
+            return numA - numB
+          })
+          setRw(updatedRw)
+          localStorage.setItem('sigesit_demo_rw', JSON.stringify(updatedRw))
+        } else if (level === 'rt') {
+          let updatedRt = editing ? rt.map((current) => current.id === item.id ? item : current) : [...rt, item]
+          updatedRt.sort((a, b) => {
+            const rwA = rw.find((r) => r.id === a.rwId)
+            const rwB = rw.find((r) => r.id === b.rwId)
+            const kelurahanA = kelurahan.find((k: { id: string; name: string; code?: string }) => k.id === rwA?.kelurahanId)?.name || ''
+            const kelurahanB = kelurahan.find((k: { id: string; name: string; code?: string }) => k.id === rwB?.kelurahanId)?.name || ''
+            if (kelurahanA !== kelurahanB) return kelurahanA.localeCompare(kelurahanB)
+            if (rwA?.name !== rwB?.name) {
+              const rwNumA = parseInt(rwA?.name || '0', 10) || 0
+              const rwNumB = parseInt(rwB?.name || '0', 10) || 0
+              return rwNumA - rwNumB
+            }
+            const rtNumA = parseInt(a.name, 10) || 0
+            const rtNumB = parseInt(b.name, 10) || 0
+            return rtNumA - rtNumB
+          })
+          setRt(updatedRt)
+          localStorage.setItem('sigesit_demo_rt', JSON.stringify(updatedRt))
+        }
+        setFormOpen(false)
+        setEditing(null)
+        return
+      } catch (err) {
+        console.error('Demo mode: Error saving region:', err)
+        window.alert('Data gagal disimpan di mode demo')
+        return
+      }
+    }
+    
     if (supabaseConfigured && supabase) {
       const table = level === 'kelurahan' ? 'kelurahan' : level
       const payload = level === 'kelurahan' ? { name, code } : level === 'rw' ? { number: name, kelurahan_id: parentId } : { number: name, rw_id: parentId }
@@ -988,6 +1241,31 @@ function WilayahPage({ kelurahan, rw, rt, setKelurahan, setRw, setRt }: { kelura
       return
     }
     if (!window.confirm(`Hapus ${level} ${item.name}?`)) return
+    
+    if (isDemoMode) {
+      // In demo mode, remove from localStorage only
+      try {
+        if (level === 'kelurahan') {
+          const updatedKelurahan = kelurahan.filter((current) => current.id !== item.id)
+          setKelurahan(updatedKelurahan)
+          localStorage.setItem('sigesit_demo_kelurahan', JSON.stringify(updatedKelurahan))
+        } else if (level === 'rw') {
+          const updatedRw = rw.filter((current) => current.id !== item.id)
+          setRw(updatedRw)
+          localStorage.setItem('sigesit_demo_rw', JSON.stringify(updatedRw))
+        } else if (level === 'rt') {
+          const updatedRt = rt.filter((current) => current.id !== item.id)
+          setRt(updatedRt)
+          localStorage.setItem('sigesit_demo_rt', JSON.stringify(updatedRt))
+        }
+        return
+      } catch (err) {
+        console.error('Demo mode: Error removing region:', err)
+        window.alert('Data gagal dihapus di mode demo')
+        return
+      }
+    }
+    
     if (supabaseConfigured && supabase) {
       const table = level === 'kelurahan' ? 'kelurahan' : level
       const result = await supabase.from(table).delete().eq('id', item.id)
@@ -4803,10 +5081,28 @@ function LoginPage({ onLoginSuccess }: { onLoginSuccess?: () => Promise<void> })
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     setError('')
-    if (!supabase) { setError('Supabase belum dikonfigurasi.'); return }
     const data = new FormData(event.currentTarget)
     const email = String(data.get('email') ?? '').trim()
     const password = String(data.get('password') ?? '').trim()
+    
+    // Check for demo mode credentials
+    if (email === 'demo_user' && password === 'demo_pass123') {
+      setSubmitting(true)
+      // Store demo mode in localStorage
+      try {
+        localStorage.setItem('sigesit_demo_mode', 'true')
+        localStorage.setItem('sigesit_demo_user', 'demo_user')
+      } catch (e) {
+        console.error('Failed to store demo mode:', e)
+      }
+      setSubmitting(false)
+      // Trigger page reload to activate demo mode
+      window.location.reload()
+      return
+    }
+    
+    // Normal login flow
+    if (!supabase) { setError('Supabase belum dikonfigurasi.'); return }
     setSubmitting(true)
     const { error: signInError } = await supabase.auth.signInWithPassword({ email, password })
     console.log('Login attempt', { email, passwordLength: password.length, error: signInError?.message })

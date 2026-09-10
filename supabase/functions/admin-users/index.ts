@@ -1,7 +1,43 @@
 // Supabase Edge Function: admin-users
 // Handles account creation/update/deletion using the service role key.
-// Only callers whose profile has role = 'super_admin' or module_access.pengguna = true and is_active = true may proceed.
+// Only super_admin callers may manage accounts or module permissions.
 import { createClient } from 'jsr:@supabase/supabase-js@2'
+
+type AppRole = 'super_admin' | 'admin' | 'kader'
+type ModuleAccess = {
+  entry: boolean
+  wilayah: boolean
+  pengguna: boolean
+  lokasi: boolean
+  uji_air: boolean
+  uji_udara: boolean
+  pangan: boolean
+  group_tpp: boolean
+}
+
+function normalizeRole(role: unknown): AppRole {
+  return role === 'super_admin' || role === 'admin' || role === 'kader' ? role : 'kader'
+}
+
+function normalizeModuleAccess(role: AppRole, value: unknown): ModuleAccess {
+  const source = value && typeof value === 'object' ? value as Partial<ModuleAccess> : {}
+  const access: ModuleAccess = {
+    entry: source.entry === true,
+    wilayah: source.wilayah === true,
+    pengguna: source.pengguna === true,
+    lokasi: source.lokasi === true,
+    uji_air: source.uji_air === true,
+    uji_udara: source.uji_udara === true,
+    pangan: source.pangan === true,
+    group_tpp: source.group_tpp === true,
+  }
+
+  if (role === 'super_admin') {
+    return Object.fromEntries(Object.entries(access).map(([key]) => [key, true])) as ModuleAccess
+  }
+  if (role === 'admin') return { ...access, pengguna: false }
+  return { entry: true, wilayah: false, pengguna: false, lokasi: false, uji_air: false, uji_udara: false, pangan: false, group_tpp: false }
+}
 
 function validatePassword(password: string): string | null {
   if (!/[A-Z]/.test(password)) return 'Password harus mengandung huruf besar.'
@@ -58,7 +94,7 @@ Deno.serve(async (req) => {
      if (!callerProfile || !callerProfile.is_active) {
        return json({ error: 'Akun tidak aktif' }, 403)
      }
-     const canManageUsers = callerProfile.role === 'super_admin' || callerProfile.module_access?.pengguna === true
+     const canManageUsers = callerProfile.role === 'super_admin'
      if (!canManageUsers) {
        return json({ error: 'Tidak memiliki akses untuk mengelola pengguna' }, 403)
      }
@@ -83,12 +119,13 @@ Deno.serve(async (req) => {
       })
       if (createError || !created.user) return json({ error: createError?.message ?? 'Gagal membuat akun' }, 400)
 
+      const finalRole = normalizeRole(role)
       const { error: profileError } = await admin.from('profiles').insert({
         id: created.user.id,
         email, full_name: fullName, username, nik, phone,
-        role: role === 'super_admin' ? 'super_admin' : 'kader',
+        role: finalRole,
         kelurahan_id: kelurahanId || null, rw_id: rwId || null, rt_id: rtId || null,
-        module_access: moduleAccess || { entry: true, wilayah: true, pengguna: false, lokasi: true, uji_air: true, uji_udara: true, pangan: true, group_tpp: true },
+        module_access: normalizeModuleAccess(finalRole, moduleAccess),
         is_temp_password: true,
       })
       if (profileError) {
@@ -123,7 +160,7 @@ Deno.serve(async (req) => {
       if (username !== undefined) updates.username = username
       if (nik !== undefined) updates.nik = nik
       if (phone !== undefined) updates.phone = phone
-      if (role !== undefined) updates.role = role === 'super_admin' ? 'super_admin' : 'kader'
+      if (role !== undefined) updates.role = normalizeRole(role)
       if (kelurahanId !== undefined) updates.kelurahan_id = kelurahanId || null
       if (rwId !== undefined) updates.rw_id = rwId || null
       if (rtId !== undefined) updates.rt_id = rtId || null

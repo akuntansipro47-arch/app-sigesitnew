@@ -2,15 +2,16 @@ import { useCallback, useEffect, useRef, useState, type FormEvent, useMemo } fro
 import type { Session } from '@supabase/supabase-js'
 import './App.css'
 import { supabase, supabaseConfigured } from './lib/supabase'
+import { canAccessView as authCanAccessView, canManageUsers, isSuperAdmin, isKader, getDefaultModuleAccess, ROLE_LABELS, ROLE_DESCRIPTIONS, MODULES } from './lib/auth'
 import { exportToExcel, type ExcelCell } from './utils/exportExcel'
-import { mapProfileRow, mapLocationRow, mapWaterQualityTestRow, mapAirQualityTestRow, mapPKMInfoRow, mapFoodInspectionRow, getFunctionErrorMessage, isEmptyUjiAirValue, isUjiAirValueValid, toDbTextValue, toDbUjiAirValue, formatWaterValue } from './utils/mappers'
+import { mapProfileRow, mapLocationRow, mapWaterQualityTestRow, mapAirQualityTestRow, mapPKMInfoRow, mapFoodInspectionRow, mapEntryRow, getFunctionErrorMessage, isEmptyUjiAirValue, isUjiAirValueValid, toDbTextValue, toDbUjiAirValue, formatWaterValue } from './utils/mappers'
 import { useTranslation } from './i18n/context'
 import { loadSettings, saveSettings, getThemeById, type AppSettings, type Language, type ThemeId } from './utils/settings'
 
 type View = 'beranda' | 'entry' | 'wilayah' | 'pengguna' | 'profile' | 'profil_pengguna' | 'lokasi' | 'uji_air' | 'uji_udara' | 'pengaturan' | 'pangan' | 'group_tpp' | 'unauthorized'
 type RegionLevel = 'kelurahan' | 'rw' | 'rt'
 type Region = { id: string; name: string; code?: string; kelurahanId?: string; rwId?: string }
-type UserRole = 'super_admin' | 'kader'
+type UserRole = 'super_admin' | 'admin' | 'kader'
 type ModuleAccess = { entry: boolean; wilayah: boolean; pengguna: boolean; lokasi: boolean; uji_air: boolean; uji_udara: boolean; pangan: boolean; group_tpp: boolean }
 type UserProfile = {
   id: string
@@ -217,11 +218,25 @@ type Entry = {
   entryNumber: number
   entryDate: string
   officerId: string
+  createdBy?: string
   kelurahanId: string
   rwId: string
   rtId: string
   familyCards: FamilyCard[]
   questionnaireResponses: QuestionnaireResponse[]
+}
+
+type EntryRow = {
+  id: string
+  entry_number: number
+  entry_date: string
+  officer_id: string
+  created_by: string
+  kelurahan_id: string
+  rw_id: string
+  rt_id: string
+  created_at: string
+  updated_at: string
 }
 
 // Questionnaire definitions
@@ -417,7 +432,9 @@ function App() {
     try {
       const demoMode = localStorage.getItem('sigesit_demo_mode')
       const demoUser = localStorage.getItem('sigesit_demo_user')
-      if (demoMode === 'true' && demoUser === 'demo@sigesit.local') {
+      console.log('Checking demo mode on mount:', { demoMode, demoUser })
+      if (demoMode === 'true' && demoUser?.toLowerCase() === 'demo@sigesit.local') {
+        console.log('Activating demo mode')
         setIsDemoMode(true)
         // Set demo profile
         const demoProfile: UserProfile = {
@@ -495,7 +512,7 @@ function App() {
   const clearDemoData = useCallback(() => {
     try {
       const demoUser = localStorage.getItem('sigesit_demo_user')
-      if (demoUser === 'demo@sigesit.local') {
+      if (demoUser?.toLowerCase() === 'demo@sigesit.local') {
         localStorage.removeItem('sigesit_demo_mode')
         localStorage.removeItem('sigesit_demo_user')
         localStorage.removeItem('sigesit_demo_locations')
@@ -714,7 +731,7 @@ function App() {
         email: session.user.email || null,
         role: 'kader',
         isActive: true,
-        moduleAccess: { entry: true, wilayah: true, pengguna: false, lokasi: true, uji_air: true, uji_udara: true, pangan: true, group_tpp: true }
+        moduleAccess: { entry: true, wilayah: false, pengguna: false, lokasi: false, uji_air: false, uji_udara: false, pangan: false, group_tpp: false }
       })
     }
     void loadProfile()
@@ -866,23 +883,7 @@ function App() {
 
   const displayName = profile?.fullName ?? 'Syifa Zahra'
   const initials = displayName.split(' ').map((part) => part[0]).slice(0, 2).join('').toUpperCase()
-  const canAccessView = (viewName: string) => {
-    if (profile?.role === 'super_admin') return true
-    const accessMap: Record<string, keyof ModuleAccess> = {
-      entry: 'entry',
-      wilayah: 'wilayah',
-      pengguna: 'pengguna',
-      lokasi: 'lokasi',
-      uji_air: 'uji_air',
-      uji_udara: 'uji_udara',
-      pangan: 'pangan',
-      group_tpp: 'group_tpp',
-      profile: 'pengguna',
-    }
-    const moduleKey = accessMap[viewName]
-    if (!moduleKey) return true
-    return profile?.moduleAccess?.[moduleKey] === true
-  }
+  const canAccessView = (viewName: string) => authCanAccessView(profile, viewName)
   const pkmName = pkmInfo?.namaPkm || 'SADAKELING PKM PADASUKA - KOTA CIMAHI'
   const pkmLogo = pkmInfo?.logoUrl
 
@@ -971,8 +972,8 @@ function App() {
         )}
         <p className="side-label">{t.menu.main}</p><nav><button className={view === 'beranda' ? 'active' : ''} onClick={() => setView('beranda')} type="button"><span>⌂</span> {t.nav.home}</button>{canAccessView('entry') && <button className={view === 'entry' ? 'active' : ''} onClick={() => setView('entry')} type="button"><span>👨‍👩‍👧‍👦</span> {t.nav.entry}</button>}</nav>
         <p className="side-label">{t.menu.examination}</p><nav>{canAccessView('uji_air') && <button className={view === 'uji_air' ? 'active' : ''} onClick={() => setView('uji_air')} type="button"><span>💧</span> {t.nav.ujiAir}</button>}{canAccessView('uji_udara') && <button className={view === 'uji_udara' ? 'active' : ''} onClick={() => setView('uji_udara')} type="button"><span>🌬️</span> {t.nav.ujiUdara}</button>}{canAccessView('pangan') && <button className={view === 'pangan' ? 'active' : ''} onClick={() => setView('pangan')} type="button"><span>🍱</span> {t.nav.pangan}</button>}</nav>
-        <p className="side-label">{t.menu.masterData}</p><nav>{canAccessView('wilayah') && <button className={view === 'wilayah' ? 'active' : ''} onClick={() => setView('wilayah')} type="button"><span>⌘</span> {t.nav.wilayah}</button>}{canAccessView('lokasi') && <button className={view === 'lokasi' ? 'active' : ''} onClick={() => setView('lokasi')} type="button"><span>📍</span> {t.nav.lokasi}</button>}{profile?.role === 'super_admin' && canAccessView('pengguna') && <button className={view === 'pengguna' ? 'active' : ''} onClick={() => setView('pengguna')} type="button"><span>♙</span> {t.nav.pengguna}</button>}{canAccessView('group_tpp') && <button className={view === 'group_tpp' ? 'active' : ''} onClick={() => setView('group_tpp')} type="button"><span>📋</span> {t.nav.groupTpp}</button>}</nav>
-        <p className="side-label">{t.menu.account}</p><nav>{profile?.role === 'super_admin' ? (
+        <p className="side-label">{t.menu.masterData}</p><nav>{canAccessView('wilayah') && <button className={view === 'wilayah' ? 'active' : ''} onClick={() => setView('wilayah')} type="button"><span>⌘</span> {t.nav.wilayah}</button>}{canAccessView('lokasi') && <button className={view === 'lokasi' ? 'active' : ''} onClick={() => setView('lokasi')} type="button"><span>📍</span> {t.nav.lokasi}</button>}{canManageUsers(profile) && <button className={view === 'pengguna' ? 'active' : ''} onClick={() => setView('pengguna')} type="button"><span>♙</span> {t.nav.pengguna}</button>}{canAccessView('group_tpp') && <button className={view === 'group_tpp' ? 'active' : ''} onClick={() => setView('group_tpp')} type="button"><span>📋</span> {t.nav.groupTpp}</button>}</nav>
+        <p className="side-label">{t.menu.account}</p><nav>{isSuperAdmin(profile) ? (
           <button className={view === 'profile' ? 'active' : ''} onClick={() => setView('profile')} type="button"><span>🏥</span> {t.nav.profile}</button>
         ) : (
           <button className={view === 'profil_pengguna' ? 'active' : ''} onClick={() => setView('profil_pengguna')} type="button"><span>👤</span> {t.nav.profileUser}</button>
@@ -1686,7 +1687,11 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
     }
     setLoading(true)
     try {
-      const { data, error } = await supabase.from('entries').select('*').eq('officer_id', profile.id).order('entry_date', { ascending: false })
+      let query = supabase.from('entries').select('*')
+      if (isKader(profile)) {
+        query = query.eq('created_by', profile.id)
+      }
+      const { data, error } = await query.order('entry_date', { ascending: false })
       console.log('loadEntries result:', { data, error: error?.message })
       if (error) {
         console.error('Error loading entries:', error)
@@ -1701,11 +1706,12 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
       }
       // Load family cards and questionnaire responses for each entry
       const entriesWithDetails = await Promise.all(
-        data.map(async (entry: any) => {
+        data.map(async (entry: EntryRow) => {
           const { data: fcData } = await supabase!.from('family_cards').select('*').eq('entry_id', entry.id)
           const { data: qrData } = await supabase!.from('questionnaire_responses').select('*').in('family_card_id', fcData?.map((fc: any) => fc.id) || [])
+          const mapped = mapEntryRow(entry)
           return {
-            ...entry,
+            ...mapped,
             familyCards: (fcData || []).map((fc: any) => ({
               id: fc.id,
               entryId: fc.entry_id,
@@ -1867,14 +1873,16 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
     setError('')
 
     try {
-      let entryId = editing?.id
+        let entryId = editing?.id
 
       if (!editing) {
-        // Create entry
+        // Create entry - created_by is auto-set by DB trigger for non-super-admin users,
+        // but we also set it explicitly to enforce kader data isolation at the application layer
         const { data: newEntry, error: entryError } = await supabase.from('entries').insert({
           entry_number: nextEntryNumber,
           entry_date: String(data.get('entryDate')),
           officer_id: profile.id,
+          created_by: profile.id,
           kelurahan_id: selectedKelurahanId,
           rw_id: selectedRwId,
           rt_id: selectedRtId
@@ -2517,8 +2525,8 @@ function UserProfilePage({ profile }: { profile: UserProfile | null }) {
     return <main className="auth-shell"><p className="auth-loading">Memuat profil pengguna…</p></main>
   }
 
-  const getRoleLabel = (role: UserRole) => role === 'super_admin' ? 'Super Admin' : 'Kader'
-  const getRoleBadgeClass = (role: UserRole) => role === 'super_admin' ? 'badge-super' : 'badge-kader'
+  const getRoleLabel = (role: UserRole) => ROLE_LABELS[role]
+  const getRoleBadgeClass = (role: UserRole) => role === 'super_admin' ? 'badge-super' : role === 'admin' ? 'badge-admin' : 'badge-kader'
   const getStatusLabel = (isActive: boolean) => isActive ? 'Aktif' : 'Nonaktif'
   const getStatusClass = (isActive: boolean) => isActive ? 'status-active' : 'status-inactive'
 
@@ -2539,7 +2547,7 @@ function UserProfilePage({ profile }: { profile: UserProfile | null }) {
         <div>
           <h2 style={{ margin: '0 0 8px 0', fontSize: '24px' }}>{profile.fullName}</h2>
           <p style={{ margin: '0 0 8px 0', color: '#6b7280' }}>{profile.username}</p>
-          <span className={`role-badge ${getRoleBadgeClass(profile.role)}`} style={{ display: 'inline-block', padding: '4px 12px', borderRadius: '20px', fontSize: '12px', fontWeight: '600', background: profile.role === 'super_admin' ? '#fef3c7' : '#dbeafe', color: profile.role === 'super_admin' ? '#92400e' : '#1e40af' }}>
+          <span className={`role-badge ${getRoleBadgeClass(profile.role)}`} style={{ display: 'inline-block', padding: '4px 12px', borderRadius: '20px', fontSize: '12px', fontWeight: '600', background: profile.role === 'super_admin' ? '#fef3c7' : profile.role === 'admin' ? '#dcfce7' : '#dbeafe', color: profile.role === 'super_admin' ? '#92400e' : profile.role === 'admin' ? '#166534' : '#1e40af' }}>
             {getRoleLabel(profile.role)}
           </span>
         </div>
@@ -5512,27 +5520,36 @@ function LoginPage({ onLoginSuccess }: { onLoginSuccess?: () => Promise<void> })
     const email = String(data.get('email') ?? '').trim()
     const password = String(data.get('password') ?? '').trim()
     
-    // Check for demo mode credentials
-    if (email === 'demo@sigesit.local' && password === 'demo_pass123') {
+    console.log('Login attempt:', { email, passwordLength: password.length })
+    
+    // Check for demo mode credentials (case-insensitive for email)
+    if (email.toLowerCase() === 'demo@sigesit.local' && password === 'demo_pass123') {
+      console.log('Demo mode credentials detected')
       setSubmitting(true)
       // Store demo mode in localStorage
       try {
         localStorage.setItem('sigesit_demo_mode', 'true')
         localStorage.setItem('sigesit_demo_user', 'demo@sigesit.local')
+        console.log('Demo mode stored in localStorage')
       } catch (e) {
         console.error('Failed to store demo mode:', e)
+        setError('Gagal mengaktifkan mode demo')
+        setSubmitting(false)
+        return
       }
       setSubmitting(false)
       // Trigger page reload to activate demo mode
+      console.log('Reloading page to activate demo mode')
       window.location.reload()
       return
     }
     
+    console.log('Proceeding with normal Supabase login')
     // Normal login flow
     if (!supabase) { setError('Supabase belum dikonfigurasi.'); return }
     setSubmitting(true)
     const { error: signInError } = await supabase.auth.signInWithPassword({ email, password })
-    console.log('Login attempt', { email, passwordLength: password.length, error: signInError?.message })
+    console.log('Supabase login result:', { email, passwordLength: password.length, error: signInError?.message })
     setSubmitting(false)
     if (signInError) {
       const raw = signInError.message || ''
@@ -5604,7 +5621,8 @@ function PenggunaPage({ kelurahan, rw, rt, currentUserId }: { kelurahan: Region[
   const [submitting, setSubmitting] = useState(false)
   const [selectedKelurahanId, setSelectedKelurahanId] = useState('')
   const [selectedRwId, setSelectedRwId] = useState('')
-  const [moduleAccess, setModuleAccess] = useState<ModuleAccess>({ entry: true, wilayah: true, pengguna: false, lokasi: true, uji_air: true, uji_udara: true, pangan: true, group_tpp: true })
+  const [moduleAccess, setModuleAccess] = useState<ModuleAccess>(getDefaultModuleAccess('kader'))
+  const [selectedRole, setSelectedRole] = useState<UserRole>('kader')
   const [generatedPasswords, setGeneratedPasswords] = useState<Record<string, string>>({})
   const [showFormPassword, setShowFormPassword] = useState(false)
   const [showListPasswords, setShowListPasswords] = useState(false)
@@ -5716,10 +5734,17 @@ function PenggunaPage({ kelurahan, rw, rt, currentUserId }: { kelurahan: Region[
     setError('')
     setSelectedKelurahanId(user?.kelurahanId ?? '')
     setSelectedRwId(user?.rwId ?? '')
-    setModuleAccess(user?.moduleAccess || { entry: true, wilayah: true, pengguna: false, lokasi: true, uji_air: true, uji_udara: true, pangan: true, group_tpp: true })
+    const role = user?.role ?? 'kader'
+    setSelectedRole(role)
+    setModuleAccess(user?.moduleAccess || getDefaultModuleAccess(role))
     setFormOpen(true)
     setShowFormPassword(false)
     setFormPassword(user ? '' : generatePassword())
+  }
+
+  function handleRoleChange(role: UserRole) {
+    setSelectedRole(role)
+    setModuleAccess(getDefaultModuleAccess(role))
   }
 
   async function submit(event: FormEvent<HTMLFormElement>) {
@@ -5737,21 +5762,22 @@ function PenggunaPage({ kelurahan, rw, rt, currentUserId }: { kelurahan: Region[
          return
        }
      }
-    
-    // Jika mengedit, baca moduleAccess dari form
-    let updatedModuleAccess = moduleAccess
-    if (editing) {
-      updatedModuleAccess = {
-        entry: data.get('moduleAccess_entry') === 'on',
-        wilayah: data.get('moduleAccess_wilayah') === 'on',
-        pengguna: data.get('moduleAccess_pengguna') === 'on',
-        lokasi: data.get('moduleAccess_lokasi') === 'on',
-        uji_air: data.get('moduleAccess_uji_air') === 'on',
-        uji_udara: data.get('moduleAccess_uji_udara') === 'on',
-        pangan: data.get('moduleAccess_pangan') === 'on',
-        group_tpp: data.get('moduleAccess_group_tpp') === 'on',
-      }
-    }
+     
+     let updatedModuleAccess = moduleAccess
+     if (selectedRole === 'admin') {
+       updatedModuleAccess = {
+         entry: data.get('moduleAccess_entry') === 'on',
+         wilayah: data.get('moduleAccess_wilayah') === 'on',
+         pengguna: false,
+         lokasi: data.get('moduleAccess_lokasi') === 'on',
+         uji_air: data.get('moduleAccess_uji_air') === 'on',
+         uji_udara: data.get('moduleAccess_uji_udara') === 'on',
+         pangan: data.get('moduleAccess_pangan') === 'on',
+         group_tpp: data.get('moduleAccess_group_tpp') === 'on',
+       }
+     } else {
+       updatedModuleAccess = getDefaultModuleAccess(selectedRole)
+     }
     
     let username = editing?.username
     let password = formPassword
@@ -5779,7 +5805,7 @@ function PenggunaPage({ kelurahan, rw, rt, currentUserId }: { kelurahan: Region[
       username: username,
       nik: nik,
       phone: String(data.get('phone') ?? '').trim(),
-      role: editing?.role || 'kader',
+       role: selectedRole,
       kelurahanId: String(data.get('kelurahanId') ?? '') || undefined,
       rwId: String(data.get('rwId') ?? '') || undefined,
       rtId: String(data.get('rtId') ?? '') || undefined,
@@ -5925,73 +5951,40 @@ function PenggunaPage({ kelurahan, rw, rt, currentUserId }: { kelurahan: Region[
         <label>RT<select defaultValue={editing?.rtId ?? ''} disabled={!selectedRwId} name="rtId" required style={{ width: '100%' }}><option value="">Pilih RT</option>{rtOptions.map((item) => <option key={item.id} value={item.id}>RT {item.name}</option>)}</select></label>
         <label>Status Akun<select defaultValue={editing?.isActive === false ? 'off' : 'on'} name="isActive" style={{ width: '100%' }}><option value="on">🟢 Aktif</option><option value="off">🔴 Nonaktif</option></select></label>
         
+        {/* Role Selection (Super Admin only) */}
+        <label>Peran / Role
+          <select value={selectedRole} onChange={(e) => handleRoleChange(e.target.value as UserRole)} style={{ width: '100%' }}>
+            <option value="kader">📋 Kader</option>
+            <option value="admin">🛡️ Admin</option>
+            <option value="super_admin">👑 Super Admin</option>
+          </select>
+        </label>
+        <small style={{ gridColumn: '1/-1', color: '#6b7280', fontSize: '12px' }}>{ROLE_DESCRIPTIONS[selectedRole]}</small>
+        
         {/* Hak Akses Modul */}
-        <div style={{ gridColumn: '1/-1', marginBottom: '8px', marginTop: '16px' }}><h4 style={{ margin: '16px 0 8px 0', color: '#374151' }}>Hak Akses Modul</h4></div>
+        <div style={{ gridColumn: '1/-1', marginBottom: '8px', marginTop: '16px' }}><h4 style={{ margin: '16px 0 8px 0', color: '#374151' }}>Hak Akses Modul {selectedRole === 'admin' && '(Pilih modul yang diizinkan)'}{selectedRole === 'super_admin' && '(Full akses otomatis)'}{selectedRole === 'kader' && '(Hanya Data Entry)'}</h4></div>
         <div className="module-access" style={{ gridColumn: '1/-1', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '12px', background: '#f9fafb', padding: '16px', borderRadius: '8px' }}>
-          <label className="checkbox-label" style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px', background: 'white', borderRadius: '6px', border: '1px solid #e5e7eb' }}>
-            <input 
-              checked={moduleAccess.entry} 
-              onChange={(e) => setModuleAccess({...moduleAccess, entry: e.target.checked})}
-              name="moduleAccess_entry" 
-              type="checkbox" 
-            /> 👨‍👩‍👧‍👦 Akses modul Entry
-          </label>
-          <label className="checkbox-label" style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px', background: 'white', borderRadius: '6px', border: '1px solid #e5e7eb' }}>
-            <input 
-              checked={moduleAccess.wilayah} 
-              onChange={(e) => setModuleAccess({...moduleAccess, wilayah: e.target.checked})}
-              name="moduleAccess_wilayah" 
-              type="checkbox" 
-            /> ⌘ Akses modul Wilayah
-          </label>
-          <label className="checkbox-label" style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px', background: 'white', borderRadius: '6px', border: '1px solid #e5e7eb' }}>
-            <input 
-              checked={moduleAccess.pengguna} 
-              onChange={(e) => setModuleAccess({...moduleAccess, pengguna: e.target.checked})}
-              name="moduleAccess_pengguna" 
-              type="checkbox" 
-            /> ♙ Akses modul Pengguna
-          </label>
-          <label className="checkbox-label" style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px', background: 'white', borderRadius: '6px', border: '1px solid #e5e7eb' }}>
-            <input 
-              checked={moduleAccess.lokasi} 
-              onChange={(e) => setModuleAccess({...moduleAccess, lokasi: e.target.checked})}
-              name="moduleAccess_lokasi" 
-              type="checkbox" 
-            /> 📍 Akses modul Lokasi
-          </label>
-          <label className="checkbox-label" style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px', background: 'white', borderRadius: '6px', border: '1px solid #e5e7eb' }}>
-            <input 
-              checked={moduleAccess.uji_air} 
-              onChange={(e) => setModuleAccess({...moduleAccess, uji_air: e.target.checked})}
-              name="moduleAccess_uji_air" 
-              type="checkbox" 
-            /> 💧 Akses modul Uji Air
-          </label>
-          <label className="checkbox-label" style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px', background: 'white', borderRadius: '6px', border: '1px solid #e5e7eb' }}>
-            <input 
-              checked={moduleAccess.uji_udara} 
-              onChange={(e) => setModuleAccess({...moduleAccess, uji_udara: e.target.checked})}
-              name="moduleAccess_uji_udara" 
-              type="checkbox" 
-            /> 🌬️ Akses modul Uji Udara
-          </label>
-          <label className="checkbox-label" style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px', background: 'white', borderRadius: '6px', border: '1px solid #e5e7eb' }}>
-            <input 
-              checked={moduleAccess.pangan} 
-              onChange={(e) => setModuleAccess({...moduleAccess, pangan: e.target.checked})}
-              name="moduleAccess_pangan" 
-              type="checkbox" 
-            /> 🍱 Akses modul Pangan
-          </label>
-          <label className="checkbox-label" style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px', background: 'white', borderRadius: '6px', border: '1px solid #e5e7eb' }}>
-            <input 
-              checked={moduleAccess.group_tpp} 
-              onChange={(e) => setModuleAccess({...moduleAccess, group_tpp: e.target.checked})}
-              name="moduleAccess_group_tpp" 
-              type="checkbox" 
-            /> 📋 Akses modul Group TPP
-          </label>
+          {MODULES.map((mod) => {
+            const isDisabled = selectedRole !== 'admin' || mod.key === 'pengguna'
+            const isChecked = moduleAccess[mod.key]
+            const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+              if (selectedRole === 'admin' && mod.key !== 'pengguna') {
+                setModuleAccess({...moduleAccess, [mod.key]: e.target.checked})
+              }
+            }
+            return (
+              <label key={mod.key} className="checkbox-label" style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px', background: isChecked ? '#dbeafe' : 'white', borderRadius: '6px', border: `1px solid ${isChecked ? '#93c5fd' : '#e5e7eb'}` }}>
+                <input
+                  checked={isChecked}
+                  onChange={handleChange}
+                  disabled={isDisabled}
+                  name={`moduleAccess_${mod.key}`}
+                  type="checkbox"
+                  style={{ accentColor: '#3b82f6', cursor: isDisabled ? 'default' : 'pointer' }}
+                /> {mod.icon} Akses modul {mod.label}
+              </label>
+            )
+          })}
         </div>
         {!editing && <div className="generated-info" style={{ gridColumn: '1/-1', background: '#dbeafe', padding: '16px', borderRadius: '8px', border: '1px solid #93c5fd' }}>
           <p style={{ margin: '4px 0' }}><strong>ℹ️ Username:</strong> Akan digenerate otomatis (5 digit terakhir NIK + 3 huruf unik)</p>
@@ -6034,9 +6027,9 @@ function PenggunaPage({ kelurahan, rw, rt, currentUserId }: { kelurahan: Region[
                     <td>{user.email || '-'}</td>
                     <td>{user.phone || '-'}</td>
                     <td>{user.nik || '-'}</td>
-                    <td>
-                      <span style={{ fontSize: '12px', padding: '2px 8px', borderRadius: '9999px', background: user.role === 'super_admin' ? '#fef3c7' : '#e0e7ff', color: user.role === 'super_admin' ? '#92400e' : '#3730a3' }}>
-                        {user.role === 'super_admin' ? '👑 Super Admin' : '📋 Kader'}
+                      <td>
+                      <span style={{ fontSize: '12px', padding: '2px 8px', borderRadius: '9999px', background: user.role === 'super_admin' ? '#fef3c7' : user.role === 'admin' ? '#dcfce7' : '#e0e7ff', color: user.role === 'super_admin' ? '#92400e' : user.role === 'admin' ? '#166534' : '#3730a3' }}>
+                        {user.role === 'super_admin' ? '👑 Super Admin' : user.role === 'admin' ? '🛡️ Admin' : '📋 Kader'}
                       </span>
                     </td>
                     <td>

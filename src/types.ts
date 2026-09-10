@@ -1,6 +1,6 @@
 export type View = 'beranda' | 'entry' | 'wilayah' | 'pengguna' | 'profile' | 'lokasi' | 'uji_air' | 'uji_udara' | 'pangan' | 'group_tpp'
 export type RegionLevel = 'kelurahan' | 'rw' | 'rt'
-export type UserRole = 'super_admin' | 'kader'
+export type UserRole = 'super_admin' | 'admin' | 'kader'
 
 export type ModuleAccess = {
   entry: boolean
@@ -238,11 +238,25 @@ export type Entry = {
   entryNumber: number
   entryDate: string
   officerId: string
+  createdBy?: string
   kelurahanId: string
   rwId: string
   rtId: string
   familyCards: FamilyCard[]
   questionnaireResponses: QuestionnaireResponse[]
+}
+
+export type EntryRow = {
+  id: string
+  entry_number: number
+  entry_date: string
+  officer_id: string
+  created_by: string
+  kelurahan_id: string
+  rw_id: string
+  rt_id: string
+  created_at: string
+  updated_at: string
 }
 
 export type Question = {

@@ -1,6 +1,9 @@
-import type { FoodInspectionSample, FoodInspectionResult, FoodInspectionRow, ProfileRow, UserProfile, LocationRow, Location, WaterQualityTestRow, WaterQualityTest, AirQualityTestRow, AirQualityTest, PKMInfoRow, PKMInfo } from '../types'
+import type { FoodInspectionSample, FoodInspectionResult, FoodInspectionRow, ProfileRow, UserProfile, LocationRow, Location, WaterQualityTestRow, WaterQualityTest, AirQualityTestRow, AirQualityTest, PKMInfoRow, PKMInfo, Entry, EntryRow } from '../types'
+import { getDefaultModuleAccess } from '../lib/auth'
 
 export function mapProfileRow(row: ProfileRow): UserProfile {
+  const defaultModuleAccess = getDefaultModuleAccess(row.role)
+
   return {
     id: row.id,
     fullName: row.full_name,
@@ -13,7 +16,7 @@ export function mapProfileRow(row: ProfileRow): UserProfile {
     rwId: row.rw_id ?? undefined,
     rtId: row.rt_id ?? undefined,
     isActive: row.is_active,
-    moduleAccess: { entry: true, wilayah: true, pengguna: false, lokasi: true, uji_air: true, uji_udara: true, pangan: true, group_tpp: true, ...row.module_access },
+    moduleAccess: { ...defaultModuleAccess, ...row.module_access },
     isTempPassword: row.is_temp_password ?? false,
   }
 }
@@ -30,6 +33,19 @@ export function mapLocationRow(row: LocationRow): Location {
     latitude: row.latitude ?? undefined,
     longitude: row.longitude ?? undefined,
     description: row.description ?? undefined,
+  }
+}
+
+export function mapEntryRow(row: EntryRow): Pick<Entry, 'id' | 'entryNumber' | 'entryDate' | 'officerId' | 'createdBy' | 'kelurahanId' | 'rwId' | 'rtId'> {
+  return {
+    id: row.id,
+    entryNumber: row.entry_number,
+    entryDate: row.entry_date,
+    officerId: row.officer_id,
+    createdBy: row.created_by,
+    kelurahanId: row.kelurahan_id,
+    rwId: row.rw_id,
+    rtId: row.rt_id,
   }
 }
 

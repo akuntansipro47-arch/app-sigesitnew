@@ -96,6 +96,8 @@ export type WaterQualityTest = {
   eColiValue?: number | string
   coliformValue?: number | string
   notes?: string
+  createdAt?: string
+  updatedAt?: string
 }
 
 export type WaterQualityTestRow = {
@@ -153,6 +155,8 @@ export type AirQualityTest = {
   ventilationRate2?: number
   ventilationRate3?: number
   notes?: string
+  createdAt?: string
+  updatedAt?: string
 }
 
 export type AirQualityTestRow = {

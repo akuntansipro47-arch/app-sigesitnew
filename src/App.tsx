@@ -138,6 +138,8 @@ type WaterQualityTest = {
   eColiValue?: number | string
   coliformValue?: number | string
   notes?: string
+  createdAt?: string
+  updatedAt?: string
 }
 
 type WaterQualityTestRow = { id: string; location_id: string; test_date: string; officer_id: string; water_temperature_value: number | string | null; water_temperature_unit: string; air_temperature_value: number | string | null; air_temperature_unit: string; tds_value: number | string | null; turbidity_value: number | string | null; color_value: string | null; odor_value: string | null; ph_value: number | string | null; nitrite_value: number | string | null; nitrate_value: number | string | null; chromium_value: number | string | null; iron_value: number | string | null; manganese_value: number | string | null; chlorine_value: number | string | null; fluoride_value: number | string | null; aluminum_value: number | string | null; e_coli_value: number | string | null; coliform_value: number | string | null; notes: string | null }
@@ -171,6 +173,8 @@ type AirQualityTest = {
   ventilationRate2?: number
   ventilationRate3?: number
   notes?: string
+  createdAt?: string
+  updatedAt?: string
 }
 
 type AirQualityTestRow = { id: string; location_id: string; test_date: string; officer_id: string; temperature_1: number | null; temperature_2: number | null; temperature_3: number | null; temperature_unit: string; humidity_1: number | null; humidity_2: number | null; humidity_3: number | null; noise_1: number | null; noise_2: number | null; noise_3: number | null; lighting_1: number | null; lighting_2: number | null; lighting_3: number | null; pm25_1: number | null; pm25_2: number | null; pm25_3: number | null; pm10_1: number | null; pm10_2: number | null; pm10_3: number | null; ventilation_rate_1: number | null; ventilation_rate_2: number | null; ventilation_rate_3: number | null; notes: string | null }
@@ -4192,28 +4196,28 @@ function UjiUdaraPage({ profile, locations, kelurahan, airTests, setAirTests }: 
           locationId: formData.locationId,
           testDate: formData.testDate,
           officerId: profile.id,
-          temperature1: formData.temperature1,
-          temperature2: formData.temperature2,
-          temperature3: formData.temperature3,
+          temperature1: Number(formData.temperature1) || undefined,
+          temperature2: Number(formData.temperature2) || undefined,
+          temperature3: Number(formData.temperature3) || undefined,
           temperatureUnit: formData.temperatureUnit,
-          humidity1: formData.humidity1,
-          humidity2: formData.humidity2,
-          humidity3: formData.humidity3,
-          noise1: formData.noise1,
-          noise2: formData.noise2,
-          noise3: formData.noise3,
-          lighting1: formData.lighting1,
-          lighting2: formData.lighting2,
-          lighting3: formData.lighting3,
-          pm25_1: formData.pm25_1,
-          pm25_2: formData.pm25_2,
-          pm25_3: formData.pm25_3,
-          pm10_1: formData.pm10_1,
-          pm10_2: formData.pm10_2,
-          pm10_3: formData.pm10_3,
-          ventilationRate1: formData.ventilationRate1,
-          ventilationRate2: formData.ventilationRate2,
-          ventilationRate3: formData.ventilationRate3,
+          humidity1: Number(formData.humidity1) || undefined,
+          humidity2: Number(formData.humidity2) || undefined,
+          humidity3: Number(formData.humidity3) || undefined,
+          noise1: Number(formData.noise1) || undefined,
+          noise2: Number(formData.noise2) || undefined,
+          noise3: Number(formData.noise3) || undefined,
+          lighting1: Number(formData.lighting1) || undefined,
+          lighting2: Number(formData.lighting2) || undefined,
+          lighting3: Number(formData.lighting3) || undefined,
+          pm25_1: Number(formData.pm25_1) || undefined,
+          pm25_2: Number(formData.pm25_2) || undefined,
+          pm25_3: Number(formData.pm25_3) || undefined,
+          pm10_1: Number(formData.pm10_1) || undefined,
+          pm10_2: Number(formData.pm10_2) || undefined,
+          pm10_3: Number(formData.pm10_3) || undefined,
+          ventilationRate1: Number(formData.ventilationRate1) || undefined,
+          ventilationRate2: Number(formData.ventilationRate2) || undefined,
+          ventilationRate3: Number(formData.ventilationRate3) || undefined,
           notes: formData.notes,
           createdAt: editing?.createdAt || new Date().toISOString(),
           updatedAt: new Date().toISOString()
@@ -5062,7 +5066,7 @@ function PanganPage({ profile, kelurahan, rw, rt, foodInspections, setFoodInspec
           rtId: formData.rtId || undefined,
           penanggungJawab: formData.penanggungJawab.trim() || undefined,
           phone: formData.phone.trim() || undefined,
-          hasilIkl: formData.hasilIkl || undefined,
+          hasilIkl: formData.hasilIkl || '',
           samples: samples.map((s) => ({
             nama_makanan: String(s?.nama_makanan ?? '').trim(),
             boraks: s?.boraks || '',

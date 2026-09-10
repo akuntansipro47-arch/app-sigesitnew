@@ -374,6 +374,7 @@ function App() {
   const [entries] = useState<Entry[]>([])
   const [users] = useState<UserProfile[]>([])
   const [settings, setSettings] = useState<AppSettings>(loadSettings)
+  const [isDemoMode, setIsDemoMode] = useState(false)
   const { t } = useTranslation()
   const orientation = useOrientation()
   const reloadLocations = useCallback(async () => {
@@ -429,7 +430,6 @@ function App() {
   const [showChangePassword, setShowChangePassword] = useState(false)
   const [changePasswordError, setChangePasswordError] = useState('')
   const [changePasswordSubmitting, setChangePasswordSubmitting] = useState(false)
-  const [isDemoMode, setIsDemoMode] = useState(false)
 
   // Check for demo mode on mount
   useEffect(() => {
@@ -495,22 +495,6 @@ function App() {
       console.error('Failed to load demo data:', e)
     }
   }, [])
-
-  // Save demo data to localStorage
-  const saveDemoData = useCallback(() => {
-    if (!isDemoMode) return
-    try {
-      localStorage.setItem('sigesit_demo_locations', JSON.stringify(locations))
-      localStorage.setItem('sigesit_demo_water_tests', JSON.stringify(waterTests))
-      localStorage.setItem('sigesit_demo_air_tests', JSON.stringify(airTests))
-      localStorage.setItem('sigesit_demo_food_inspections', JSON.stringify(foodInspections))
-      localStorage.setItem('sigesit_demo_kelurahan', JSON.stringify(kelurahan))
-      localStorage.setItem('sigesit_demo_rw', JSON.stringify(rw))
-      localStorage.setItem('sigesit_demo_rt', JSON.stringify(rt))
-    } catch (e) {
-      console.error('Failed to save demo data:', e)
-    }
-  }, [isDemoMode, locations, waterTests, airTests, foodInspections, kelurahan, rw, rt])
 
   // Clear demo data on logout
   const clearDemoData = useCallback(() => {
@@ -2760,14 +2744,14 @@ function LokasiPage({ kelurahan, rw, rt, locations, reloadLocations }: { kelurah
         const newLocation: Location = {
           id: editing?.id || `location-${Date.now()}`,
           name: payload.name,
-          code: payload.code,
-          address: payload.address,
-          kelurahanId: payload.kelurahan_id,
-          rwId: payload.rw_id,
-          rtId: payload.rt_id,
-          latitude: payload.latitude,
-          longitude: payload.longitude,
-          description: payload.description
+          code: payload.code ?? undefined,
+          address: payload.address ?? undefined,
+          kelurahanId: payload.kelurahan_id ?? undefined,
+          rwId: payload.rw_id ?? undefined,
+          rtId: payload.rt_id ?? undefined,
+          latitude: payload.latitude ?? undefined,
+          longitude: payload.longitude ?? undefined,
+          description: payload.description ?? undefined
         }
         
         let updatedLocations: Location[]

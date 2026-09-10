@@ -2632,6 +2632,15 @@ function LokasiPage({ kelurahan, rw, rt, locations, reloadLocations }: { kelurah
   const [filterKelurahanId, setFilterKelurahanId] = useState('')
   const [freeSearch, setFreeSearch] = useState('')
   const debouncedFreeSearch = useDebounce(freeSearch, 150)
+  
+  // Check demo mode
+  const isDemoMode = useMemo(() => {
+    try {
+      return localStorage.getItem('sigesit_demo_mode') === 'true'
+    } catch {
+      return false
+    }
+  }, [])
 
   function toSearchableText(location: Location): string {
     const kelName = kelurahan.find(k => k.id === location.kelurahanId)?.name ?? ''
@@ -2712,7 +2721,6 @@ function LokasiPage({ kelurahan, rw, rt, locations, reloadLocations }: { kelurah
 
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    if (!supabase) return
     const data = new FormData(event.currentTarget)
     
     setSubmitting(true)
@@ -2731,6 +2739,40 @@ function LokasiPage({ kelurahan, rw, rt, locations, reloadLocations }: { kelurah
         description: String(data.get('description') ?? '').trim() || null,
       }
 
+      if (isDemoMode) {
+        // In demo mode, save to localStorage only
+        const newLocation: Location = {
+          id: editing?.id || `location-${Date.now()}`,
+          name: payload.name,
+          code: payload.code,
+          address: payload.address,
+          kelurahanId: payload.kelurahan_id,
+          rwId: payload.rw_id,
+          rtId: payload.rt_id,
+          latitude: payload.latitude,
+          longitude: payload.longitude,
+          description: payload.description
+        }
+        
+        let updatedLocations: Location[]
+        if (editing) {
+          updatedLocations = locations.map(loc => loc.id === editing.id ? newLocation : loc)
+        } else {
+          updatedLocations = [...locations, newLocation]
+        }
+        
+        // Sort locations
+        updatedLocations.sort((a, b) => a.name.localeCompare(b.name, 'id-ID', { numeric: true, sensitivity: 'base' }))
+        
+        // Save to localStorage - this will trigger the parent state update via the useEffect in App
+        localStorage.setItem('sigesit_demo_locations', JSON.stringify(updatedLocations))
+        
+        setFormOpen(false)
+        await reloadLocations()
+        return
+      }
+
+      if (!supabase) return
       if (editing) {
         const { error: updateError } = await supabase.from('locations').update(payload).eq('id', editing.id)
         if (updateError) throw updateError
@@ -2750,6 +2792,21 @@ function LokasiPage({ kelurahan, rw, rt, locations, reloadLocations }: { kelurah
 
   async function remove(location: Location) {
     if (!window.confirm(`Hapus lokasi ${location.name}?`)) return
+    
+    if (isDemoMode) {
+      // In demo mode, remove from localStorage only
+      try {
+        const updatedLocations = locations.filter(loc => loc.id !== location.id)
+        localStorage.setItem('sigesit_demo_locations', JSON.stringify(updatedLocations))
+        await reloadLocations()
+        return
+      } catch (err) {
+        console.error('Demo mode: Error removing location:', err)
+        window.alert('Gagal menghapus lokasi di mode demo')
+        return
+      }
+    }
+
     if (!supabase) return
 
     const { error } = await supabase.from('locations').delete().eq('id', location.id)
@@ -2990,6 +3047,15 @@ function UjiAirPage({ profile, locations, kelurahan, waterTests, setWaterTests }
   // State untuk filter lokasi
   const [filterKelurahanId, setFilterKelurahanId] = useState('')
   const [filterLocationId, setFilterLocationId] = useState('')
+  
+  // Check demo mode
+  const isDemoMode = useMemo(() => {
+    try {
+      return localStorage.getItem('sigesit_demo_mode') === 'true'
+    } catch {
+      return false
+    }
+  }, [])
   const [freeSearch, setFreeSearch] = useState('')
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
@@ -3176,6 +3242,29 @@ function UjiAirPage({ profile, locations, kelurahan, waterTests, setWaterTests }
   }
 
   async function loadTests() {
+    if (isDemoMode) {
+      // In demo mode, load from localStorage
+      setLoading(true)
+      try {
+        console.log('Demo mode: Loading water quality tests from localStorage')
+        const savedTests = localStorage.getItem('sigesit_demo_water_tests')
+        if (savedTests) {
+          setTests(JSON.parse(savedTests))
+          console.log('Demo mode: Water quality tests loaded from localStorage:', JSON.parse(savedTests).length)
+        } else {
+          setTests([])
+          console.log('Demo mode: No water quality tests in localStorage')
+        }
+      } catch (err) {
+        console.error('Demo mode: Error loading water quality tests:', err)
+        setError('Gagal memuat data uji air di mode demo')
+        setTests([])
+      } finally {
+        setLoading(false)
+      }
+      return
+    }
+
     if (!supabase || !profile) {
       console.error('Supabase or profile not available for water quality tests')
       setLoading(false)
@@ -3293,6 +3382,33 @@ function UjiAirPage({ profile, locations, kelurahan, waterTests, setWaterTests }
     setFormOpen(true)
   }
 
+  function resetFormData() {
+    setFormData({
+      locationId: getDefaultLocationId(),
+      testDate: new Date().toISOString().split('T')[0],
+      waterTemperatureValue: '',
+      waterTemperatureUnit: 'C',
+      airTemperatureValue: '',
+      airTemperatureUnit: 'C',
+      tdsValue: '',
+      turbidityValue: '',
+      colorValue: '',
+      odorValue: '',
+      phValue: '',
+      nitriteValue: '',
+      nitrateValue: '',
+      chromiumValue: '',
+      ironValue: '',
+      manganeseValue: '',
+      chlorineValue: '',
+      fluorideValue: '',
+      aluminumValue: '',
+      eColiValue: '',
+      coliformValue: '',
+      notes: '',
+    })
+  }
+
   // Pastikan `lokasi` auto-terisi saat daftar lokasi selesai ter-load (tanpa refresh manual).
   useEffect(() => {
     if (!formOpen) return
@@ -3305,7 +3421,7 @@ function UjiAirPage({ profile, locations, kelurahan, waterTests, setWaterTests }
 
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    if (!supabase || !profile) return
+    if (!profile) return
     
     setSubmitting(true)
     setError('')
@@ -3332,6 +3448,66 @@ function UjiAirPage({ profile, locations, kelurahan, waterTests, setWaterTests }
         return
       }
     }
+
+    if (isDemoMode) {
+      // In demo mode, save to localStorage only
+      try {
+        const newTest: WaterQualityTest = {
+          id: editing?.id || `water-test-${Date.now()}`,
+          locationId: formData.locationId,
+          testDate: formData.testDate,
+          officerId: profile.id,
+          waterTemperatureValue: formData.waterTemperatureValue,
+          waterTemperatureUnit: formData.waterTemperatureUnit,
+          airTemperatureValue: formData.airTemperatureValue,
+          airTemperatureUnit: formData.airTemperatureUnit,
+          tdsValue: formData.tdsValue,
+          turbidityValue: formData.turbidityValue,
+          colorValue: formData.colorValue,
+          odorValue: formData.odorValue,
+          phValue: formData.phValue,
+          nitriteValue: formData.nitriteValue,
+          nitrateValue: formData.nitrateValue,
+          chromiumValue: formData.chromiumValue,
+          ironValue: formData.ironValue,
+          manganeseValue: formData.manganeseValue,
+          chlorineValue: formData.chlorineValue,
+          fluorideValue: formData.fluorideValue,
+          aluminumValue: formData.aluminumValue,
+          eColiValue: formData.eColiValue,
+          coliformValue: formData.coliformValue,
+          notes: formData.notes,
+          createdAt: editing?.createdAt || new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        }
+        
+        let updatedTests: WaterQualityTest[]
+        if (editing) {
+          updatedTests = tests.map(test => test.id === editing.id ? newTest : test)
+        } else {
+          updatedTests = [newTest, ...tests]
+        }
+        
+        // Sort by test date descending
+        updatedTests.sort((a, b) => new Date(b.testDate).getTime() - new Date(a.testDate).getTime())
+        
+        // Save to localStorage
+        localStorage.setItem('sigesit_demo_water_tests', JSON.stringify(updatedTests))
+        setTests(updatedTests)
+        
+        setFormOpen(false)
+        setEditing(null)
+        resetFormData()
+        return
+      } catch (err) {
+        console.error('Demo mode: Error saving water quality test:', err)
+        setError('Gagal menyimpan data uji air di mode demo')
+        setSubmitting(false)
+        return
+      }
+    }
+
+    if (!supabase) return
 
     try {
       // Try with new column structure first
@@ -3419,6 +3595,21 @@ function UjiAirPage({ profile, locations, kelurahan, waterTests, setWaterTests }
 
   async function remove(test: WaterQualityTest) {
     if (!window.confirm(`Hapus hasil uji tanggal ${test.testDate}?`)) return
+    
+    if (isDemoMode) {
+      // In demo mode, remove from localStorage only
+      try {
+        const updatedTests = tests.filter(t => t.id !== test.id)
+        localStorage.setItem('sigesit_demo_water_tests', JSON.stringify(updatedTests))
+        setTests(updatedTests)
+        return
+      } catch (err) {
+        console.error('Demo mode: Error removing water quality test:', err)
+        window.alert('Gagal menghapus hasil uji di mode demo')
+        return
+      }
+    }
+
     if (!supabase) return
 
     const { error } = await supabase.from('water_quality_tests').delete().eq('id', test.id)
@@ -3681,6 +3872,15 @@ function UjiUdaraPage({ profile, locations, kelurahan, airTests, setAirTests }: 
   const [freeSearch, setFreeSearch] = useState('')
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
+  
+  // Check demo mode
+  const isDemoMode = useMemo(() => {
+    try {
+      return localStorage.getItem('sigesit_demo_mode') === 'true'
+    } catch {
+      return false
+    }
+  }, [])
 
   function toSearchableText(test: AirQualityTest): string {
     const location = locations.find(l => l.id === test.locationId)
@@ -3796,6 +3996,29 @@ function UjiUdaraPage({ profile, locations, kelurahan, airTests, setAirTests }: 
   }
 
   async function loadTests() {
+    if (isDemoMode) {
+      // In demo mode, load from localStorage
+      setLoading(true)
+      try {
+        console.log('Demo mode: Loading air quality tests from localStorage')
+        const savedTests = localStorage.getItem('sigesit_demo_air_tests')
+        if (savedTests) {
+          setTests(JSON.parse(savedTests))
+          console.log('Demo mode: Air quality tests loaded from localStorage:', JSON.parse(savedTests).length)
+        } else {
+          setTests([])
+          console.log('Demo mode: No air quality tests in localStorage')
+        }
+      } catch (err) {
+        console.error('Demo mode: Error loading air quality tests:', err)
+        setError('Gagal memuat data uji udara di mode demo')
+        setTests([])
+      } finally {
+        setLoading(false)
+      }
+      return
+    }
+
     if (!supabase || !profile) {
       console.error('Supabase or profile not available for air quality tests')
       setLoading(false)
@@ -3904,6 +4127,22 @@ function UjiUdaraPage({ profile, locations, kelurahan, airTests, setAirTests }: 
     setFormOpen(true)
   }
 
+  function resetFormData() {
+    setFormData({
+      locationId: getDefaultLocationId(),
+      testDate: new Date().toISOString().split('T')[0],
+      temperature1: '', temperature2: '', temperature3: '',
+      temperatureUnit: 'C',
+      humidity1: '', humidity2: '', humidity3: '',
+      noise1: '', noise2: '', noise3: '',
+      lighting1: '', lighting2: '', lighting3: '',
+      pm25_1: '', pm25_2: '', pm25_3: '',
+      pm10_1: '', pm10_2: '', pm10_3: '',
+      ventilationRate1: '', ventilationRate2: '', ventilationRate3: '',
+      notes: '',
+    })
+  }
+
   // Pastikan `lokasi` auto-terisi saat daftar lokasi selesai ter-load (tanpa refresh manual).
   useEffect(() => {
     if (!formOpen) return
@@ -3916,7 +4155,7 @@ function UjiUdaraPage({ profile, locations, kelurahan, airTests, setAirTests }: 
 
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    if (!supabase || !profile) return
+    if (!profile) return
     
     setSubmitting(true)
     setError('')
@@ -3932,6 +4171,69 @@ function UjiUdaraPage({ profile, locations, kelurahan, airTests, setAirTests }: 
       setSubmitting(false)
       return
     }
+
+    if (isDemoMode) {
+      // In demo mode, save to localStorage only
+      try {
+        const newTest: AirQualityTest = {
+          id: editing?.id || `air-test-${Date.now()}`,
+          locationId: formData.locationId,
+          testDate: formData.testDate,
+          officerId: profile.id,
+          temperature1: formData.temperature1,
+          temperature2: formData.temperature2,
+          temperature3: formData.temperature3,
+          temperatureUnit: formData.temperatureUnit,
+          humidity1: formData.humidity1,
+          humidity2: formData.humidity2,
+          humidity3: formData.humidity3,
+          noise1: formData.noise1,
+          noise2: formData.noise2,
+          noise3: formData.noise3,
+          lighting1: formData.lighting1,
+          lighting2: formData.lighting2,
+          lighting3: formData.lighting3,
+          pm25_1: formData.pm25_1,
+          pm25_2: formData.pm25_2,
+          pm25_3: formData.pm25_3,
+          pm10_1: formData.pm10_1,
+          pm10_2: formData.pm10_2,
+          pm10_3: formData.pm10_3,
+          ventilationRate1: formData.ventilationRate1,
+          ventilationRate2: formData.ventilationRate2,
+          ventilationRate3: formData.ventilationRate3,
+          notes: formData.notes,
+          createdAt: editing?.createdAt || new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        }
+        
+        let updatedTests: AirQualityTest[]
+        if (editing) {
+          updatedTests = tests.map(test => test.id === editing.id ? newTest : test)
+        } else {
+          updatedTests = [newTest, ...tests]
+        }
+        
+        // Sort by test date descending
+        updatedTests.sort((a, b) => new Date(b.testDate).getTime() - new Date(a.testDate).getTime())
+        
+        // Save to localStorage
+        localStorage.setItem('sigesit_demo_air_tests', JSON.stringify(updatedTests))
+        setTests(updatedTests)
+        
+        setFormOpen(false)
+        setEditing(null)
+        resetFormData()
+        return
+      } catch (err) {
+        console.error('Demo mode: Error saving air quality test:', err)
+        setError('Gagal menyimpan data uji udara di mode demo')
+        setSubmitting(false)
+        return
+      }
+    }
+
+    if (!supabase) return
 
     try {
       const payload = {
@@ -3984,6 +4286,21 @@ function UjiUdaraPage({ profile, locations, kelurahan, airTests, setAirTests }: 
 
   async function remove(test: AirQualityTest) {
     if (!window.confirm(`Hapus hasil uji tanggal ${test.testDate}?`)) return
+    
+    if (isDemoMode) {
+      // In demo mode, remove from localStorage only
+      try {
+        const updatedTests = tests.filter(t => t.id !== test.id)
+        localStorage.setItem('sigesit_demo_air_tests', JSON.stringify(updatedTests))
+        setTests(updatedTests)
+        return
+      } catch (err) {
+        console.error('Demo mode: Error removing air quality test:', err)
+        window.alert('Gagal menghapus hasil uji di mode demo')
+        return
+      }
+    }
+
     if (!supabase) return
 
     const { error } = await supabase.from('air_quality_tests').delete().eq('id', test.id)
@@ -4449,6 +4766,15 @@ function PanganPage({ profile, kelurahan, rw, rt, foodInspections, setFoodInspec
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
   const debouncedFreeSearch = useDebounce(freeSearch, 150)
+  
+  // Check demo mode
+  const isDemoMode = useMemo(() => {
+    try {
+      return localStorage.getItem('sigesit_demo_mode') === 'true'
+    } catch {
+      return false
+    }
+  }, [])
 
   const [formData, setFormData] = useState({
     entryDate: new Date().toISOString().split('T')[0],
@@ -4528,6 +4854,29 @@ function PanganPage({ profile, kelurahan, rw, rt, foodInspections, setFoodInspec
   }
 
   async function loadInspections() {
+    if (isDemoMode) {
+      // In demo mode, load from localStorage
+      setLoading(true)
+      try {
+        console.log('Demo mode: Loading food inspections from localStorage')
+        const savedInspections = localStorage.getItem('sigesit_demo_food_inspections')
+        if (savedInspections) {
+          setInspections(JSON.parse(savedInspections))
+          console.log('Demo mode: Food inspections loaded from localStorage:', JSON.parse(savedInspections).length)
+        } else {
+          setInspections([])
+          console.log('Demo mode: No food inspections in localStorage')
+        }
+      } catch (err) {
+        console.error('Demo mode: Error loading food inspections:', err)
+        setError('Gagal memuat data hasil pemeriksaan di mode demo')
+        setInspections([])
+      } finally {
+        setLoading(false)
+      }
+      return
+    }
+
     if (!supabase || !profile) {
       setLoading(false)
       return
@@ -4681,9 +5030,68 @@ function PanganPage({ profile, kelurahan, rw, rt, foodInspections, setFoodInspec
 
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    if (!supabase || !profile) return
+    if (!profile) return
     setSubmitting(true)
     setError('')
+    
+    if (isDemoMode) {
+      // In demo mode, save to localStorage only
+      try {
+        const entryDayText = formData.entryDate ? dayNames[new Date(formData.entryDate).getDay()] : ''
+        const newInspection: FoodInspectionResult = {
+          id: editing?.id || `food-inspection-${Date.now()}`,
+          entryNumber: editing?.entryNumber || inspections.length + 1,
+          entryDate: formData.entryDate,
+          entryDay: entryDayText || undefined,
+          jenisTppId: formData.jenisTppId || undefined,
+          address: formData.address.trim() || undefined,
+          kelurahanId: formData.kelurahanId || undefined,
+          rwId: formData.rwId || undefined,
+          rtId: formData.rtId || undefined,
+          penanggungJawab: formData.penanggungJawab.trim() || undefined,
+          phone: formData.phone.trim() || undefined,
+          hasilIkl: formData.hasilIkl || undefined,
+          samples: samples.map((s) => ({
+            nama_makanan: String(s?.nama_makanan ?? '').trim(),
+            boraks: s?.boraks || '',
+            formalin: s?.formalin || '',
+            rodaminB: s?.rodaminB || '',
+            metanilYellow: s?.metanilYellow || '',
+            eColi: s?.eColi || '',
+            remarks: String(s?.remarks ?? '').trim(),
+          })),
+          officerId: profile.id,
+          createdAt: editing?.createdAt || new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        }
+        
+        let updatedInspections: FoodInspectionResult[]
+        if (editing) {
+          updatedInspections = inspections.map(insp => insp.id === editing.id ? newInspection : insp)
+        } else {
+          updatedInspections = [newInspection, ...inspections]
+        }
+        
+        // Sort by entry date descending
+        updatedInspections.sort((a, b) => new Date(b.entryDate).getTime() - new Date(a.entryDate).getTime())
+        
+        // Save to localStorage
+        localStorage.setItem('sigesit_demo_food_inspections', JSON.stringify(updatedInspections))
+        setInspections(updatedInspections)
+        
+        setFormOpen(false)
+        setSamples([emptySample()])
+        return
+      } catch (err) {
+        console.error('Demo mode: Error saving food inspection:', err)
+        setError('Gagal menyimpan data di mode demo')
+        setSubmitting(false)
+        return
+      }
+    }
+
+    if (!supabase) return
+
     try {
       const entryDayText = formData.entryDate ? dayNames[new Date(formData.entryDate).getDay()] : ''
       const payload = {
@@ -4729,6 +5137,21 @@ function PanganPage({ profile, kelurahan, rw, rt, foodInspections, setFoodInspec
 
   async function remove(item: FoodInspectionResult) {
     if (!window.confirm(`Hapus hasil pemeriksaan No. ${item.entryNumber}?`)) return
+    
+    if (isDemoMode) {
+      // In demo mode, remove from localStorage only
+      try {
+        const updatedInspections = inspections.filter(insp => insp.id !== item.id)
+        localStorage.setItem('sigesit_demo_food_inspections', JSON.stringify(updatedInspections))
+        setInspections(updatedInspections)
+        return
+      } catch (err) {
+        console.error('Demo mode: Error removing food inspection:', err)
+        window.alert('Gagal menghapus data di mode demo')
+        return
+      }
+    }
+
     if (!supabase) return
     const { error } = await supabase.from('food_inspection_results').delete().eq('id', item.id)
     if (error) {

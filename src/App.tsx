@@ -416,16 +416,17 @@ function App() {
   useEffect(() => {
     try {
       const demoMode = localStorage.getItem('sigesit_demo_mode')
-      if (demoMode === 'true') {
+      const demoUser = localStorage.getItem('sigesit_demo_user')
+      if (demoMode === 'true' && demoUser === 'demo@sigesit.local') {
         setIsDemoMode(true)
         // Set demo profile
         const demoProfile: UserProfile = {
           id: 'demo-user-id',
           fullName: 'Demo User',
-          username: 'demo@sigesit.com',
+          username: 'demo@sigesit.local',
           nik: '0000000000000001',
           phone: '081234567890',
-          email: 'demo@sigesit.com',
+          email: 'demo@sigesit.local',
           role: 'super_admin',
           isActive: true,
           moduleAccess: {
@@ -493,15 +494,18 @@ function App() {
   // Clear demo data on logout
   const clearDemoData = useCallback(() => {
     try {
-      localStorage.removeItem('sigesit_demo_mode')
-      localStorage.removeItem('sigesit_demo_user')
-      localStorage.removeItem('sigesit_demo_locations')
-      localStorage.removeItem('sigesit_demo_water_tests')
-      localStorage.removeItem('sigesit_demo_air_tests')
-      localStorage.removeItem('sigesit_demo_food_inspections')
-      localStorage.removeItem('sigesit_demo_kelurahan')
-      localStorage.removeItem('sigesit_demo_rw')
-      localStorage.removeItem('sigesit_demo_rt')
+      const demoUser = localStorage.getItem('sigesit_demo_user')
+      if (demoUser === 'demo@sigesit.local') {
+        localStorage.removeItem('sigesit_demo_mode')
+        localStorage.removeItem('sigesit_demo_user')
+        localStorage.removeItem('sigesit_demo_locations')
+        localStorage.removeItem('sigesit_demo_water_tests')
+        localStorage.removeItem('sigesit_demo_air_tests')
+        localStorage.removeItem('sigesit_demo_food_inspections')
+        localStorage.removeItem('sigesit_demo_kelurahan')
+        localStorage.removeItem('sigesit_demo_rw')
+        localStorage.removeItem('sigesit_demo_rt')
+      }
       setIsDemoMode(false)
       setProfile(null)
       window.location.reload()
@@ -5509,12 +5513,12 @@ function LoginPage({ onLoginSuccess }: { onLoginSuccess?: () => Promise<void> })
     const password = String(data.get('password') ?? '').trim()
     
     // Check for demo mode credentials
-    if (email === 'demo@sigesit.com' && password === 'demo_pass123') {
+    if (email === 'demo@sigesit.local' && password === 'demo_pass123') {
       setSubmitting(true)
       // Store demo mode in localStorage
       try {
         localStorage.setItem('sigesit_demo_mode', 'true')
-        localStorage.setItem('sigesit_demo_user', 'demo@sigesit.com')
+        localStorage.setItem('sigesit_demo_user', 'demo@sigesit.local')
       } catch (e) {
         console.error('Failed to store demo mode:', e)
       }

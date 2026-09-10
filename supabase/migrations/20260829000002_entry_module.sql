@@ -47,18 +47,21 @@ alter table public.family_cards enable row level security;
 alter table public.questionnaire_responses enable row level security;
 
 -- Policy: officers can read/write their own entries
+drop policy if exists "officers manage own entries" on public.entries;
 create policy "officers manage own entries" on public.entries
   for all to authenticated
   using (officer_id = auth.uid())
-  with check officer_id = auth.uid();
+  with check (officer_id = auth.uid());
 
 -- Policy: super admins can manage all entries
+drop policy if exists "super admins manage all entries" on public.entries;
 create policy "super admins manage all entries" on public.entries
   for all to authenticated
   using (public.is_super_admin(auth.uid()))
-  with check public.is_super_admin(auth.uid());
+  with check (public.is_super_admin(auth.uid()));
 
 -- Policy: officers can read/write family cards for their entries
+drop policy if exists "officers manage own family cards" on public.family_cards;
 create policy "officers manage own family cards" on public.family_cards
   for all to authenticated
   using (exists (
@@ -73,12 +76,14 @@ create policy "officers manage own family cards" on public.family_cards
   ));
 
 -- Policy: super admins can manage all family cards
+drop policy if exists "super admins manage all family cards" on public.family_cards;
 create policy "super admins manage all family cards" on public.family_cards
   for all to authenticated
   using (public.is_super_admin(auth.uid()))
-  with check public.is_super_admin(auth.uid());
+  with check (public.is_super_admin(auth.uid()));
 
 -- Policy: officers can read/write questionnaire responses for their family cards
+drop policy if exists "officers manage own questionnaire responses" on public.questionnaire_responses;
 create policy "officers manage own questionnaire responses" on public.questionnaire_responses
   for all to authenticated
   using (exists (
@@ -95,10 +100,11 @@ create policy "officers manage own questionnaire responses" on public.questionna
   ));
 
 -- Policy: super admins can manage all questionnaire responses
+drop policy if exists "super admins manage all questionnaire responses" on public.questionnaire_responses;
 create policy "super admins manage all questionnaire responses" on public.questionnaire_responses
   for all to authenticated
   using (public.is_super_admin(auth.uid()))
-  with check public.is_super_admin(auth.uid());
+  with check (public.is_super_admin(auth.uid()));
 
 -- Function: Get next entry number for officer
 create or replace function public.get_next_entry_number(officer_id uuid)

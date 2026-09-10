@@ -29,21 +29,25 @@ CREATE TRIGGER trg_group_tpp_updated_at
 -- RLS
 ALTER TABLE group_tpp ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "Authenticated users can read group_tpp" ON group_tpp;
 CREATE POLICY "Authenticated users can read group_tpp"
   ON group_tpp FOR SELECT
   TO authenticated
   USING (true);
 
+DROP POLICY IF EXISTS "Authenticated users can insert group_tpp" ON group_tpp;
 CREATE POLICY "Authenticated users can insert group_tpp"
   ON group_tpp FOR INSERT
   TO authenticated
   WITH CHECK (true);
 
+DROP POLICY IF EXISTS "Authenticated users can update group_tpp" ON group_tpp;
 CREATE POLICY "Authenticated users can update group_tpp"
   ON group_tpp FOR UPDATE
   TO authenticated
   USING (true);
 
+DROP POLICY IF EXISTS "Authenticated users can delete group_tpp" ON group_tpp;
 CREATE POLICY "Authenticated users can delete group_tpp"
   ON group_tpp FOR DELETE
   TO authenticated

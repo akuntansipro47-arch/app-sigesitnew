@@ -65,21 +65,25 @@ create trigger trg_food_inspection_updated_at
 -- RLS
 alter table public.food_inspection_results enable row level security;
 
+drop policy if exists "Authenticated users can read food_inspection_results" on public.food_inspection_results;
 create policy "Authenticated users can read food_inspection_results"
   on public.food_inspection_results for select
   to authenticated
   using (true);
 
+drop policy if exists "Authenticated users can insert food_inspection_results" on public.food_inspection_results;
 create policy "Authenticated users can insert food_inspection_results"
   on public.food_inspection_results for insert
   to authenticated
   with check (true);
 
+drop policy if exists "Authenticated users can update food_inspection_results" on public.food_inspection_results;
 create policy "Authenticated users can update food_inspection_results"
   on public.food_inspection_results for update
   to authenticated
   using (true);
 
+drop policy if exists "Authenticated users can delete food_inspection_results" on public.food_inspection_results;
 create policy "Authenticated users can delete food_inspection_results"
   on public.food_inspection_results for delete
   to authenticated

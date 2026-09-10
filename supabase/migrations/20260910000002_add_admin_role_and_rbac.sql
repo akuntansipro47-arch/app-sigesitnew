@@ -4,7 +4,7 @@ ALTER TABLE public.profiles
   ALTER COLUMN module_access SET DEFAULT '{"entry": false, "wilayah": false, "pengguna": false, "lokasi": false, "uji_air": false, "uji_udara": false, "pangan": false, "group_tpp": false}'::jsonb;
 
 UPDATE public.profiles
-SET module_access = CASE role
+SET module_access = CASE role::text
   WHEN 'super_admin' THEN '{"entry": true, "wilayah": true, "pengguna": true, "lokasi": true, "uji_air": true, "uji_udara": true, "pangan": true, "group_tpp": true}'::jsonb
   WHEN 'admin' THEN jsonb_build_object(
     'entry', coalesce((module_access ->> 'entry')::boolean, false),
@@ -78,7 +78,7 @@ AS $$
     SELECT 1
     FROM public.profiles
     WHERE id = uid
-      AND role IN ('super_admin', 'admin')
+      AND role::text IN ('super_admin', 'admin')
       AND is_active = true
   );
 $$;
@@ -89,20 +89,7 @@ LANGUAGE sql
 SECURITY DEFINER
 STABLE
 SET search_path = public
-AS $$
-  SELECT EXISTS (
-    SELECT 1
-    FROM public.profiles
-    WHERE id = uid
-      AND is_active = true
-      AND (
-        role = 'super_admin'
-        OR (
-          role = 'admin'
-          AND coalesce((module_access ->> module_name)::boolean, false)
-        )
-      );
-$$;
+AS $$ SELECT EXISTS (SELECT 1 FROM public.profiles WHERE id = uid AND is_active = true AND (role = 'super_admin' OR (role::text = 'admin' AND coalesce((module_access ->> module_name)::boolean, false)))) $$;
 
 CREATE OR REPLACE FUNCTION public.can_access_entry(uid uuid, entry_uid uuid)
 RETURNS boolean
@@ -118,7 +105,8 @@ AS $$
       AND (
         public.has_module_access(uid, 'entry')
         OR created_by = uid
-      );
+      )
+  );
 $$;
 
 DROP POLICY IF EXISTS "users read own profile" ON public.profiles;
@@ -339,7 +327,7 @@ CREATE POLICY "authorized users insert water quality tests" ON public.water_qual
 
 CREATE POLICY "authorized users update water quality tests" ON public.water_quality_tests
   FOR UPDATE TO authenticated
-  USING (public.has_module_access(auth.uid(), 'uji_air'));
+  USING (public.has_module_access(auth.uid(), 'uji_air'))
   WITH CHECK (public.has_module_access(auth.uid(), 'uji_air'));
 
 CREATE POLICY "authorized users delete water quality tests" ON public.water_quality_tests
@@ -361,7 +349,7 @@ CREATE POLICY "authorized users insert air quality tests" ON public.air_quality_
 
 CREATE POLICY "authorized users update air quality tests" ON public.air_quality_tests
   FOR UPDATE TO authenticated
-  USING (public.has_module_access(auth.uid(), 'uji_udara'));
+  USING (public.has_module_access(auth.uid(), 'uji_udara'))
   WITH CHECK (public.has_module_access(auth.uid(), 'uji_udara'));
 
 CREATE POLICY "authorized users delete air quality tests" ON public.air_quality_tests
@@ -405,7 +393,7 @@ CREATE POLICY "authorized users insert food inspections" ON public.food_inspecti
 
 CREATE POLICY "authorized users update food inspections" ON public.food_inspection_results
   FOR UPDATE TO authenticated
-  USING (public.has_module_access(auth.uid(), 'pangan'));
+  USING (public.has_module_access(auth.uid(), 'pangan'))
   WITH CHECK (public.has_module_access(auth.uid(), 'pangan'));
 
 CREATE POLICY "authorized users delete food inspections" ON public.food_inspection_results

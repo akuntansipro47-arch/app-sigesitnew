@@ -3,9 +3,9 @@
 
 -- Add new columns for water and air temperature with separate units
 ALTER TABLE water_quality_tests 
-ADD COLUMN IF NOT EXISTS water_temperature_value NUMERIC,
+ADD COLUMN IF NOT EXISTS water_temperature_value TEXT,
 ADD COLUMN IF NOT EXISTS water_temperature_unit TEXT DEFAULT 'C',
-ADD COLUMN IF NOT EXISTS air_temperature_value NUMERIC,
+ADD COLUMN IF NOT EXISTS air_temperature_value TEXT,
 ADD COLUMN IF NOT EXISTS air_temperature_unit TEXT DEFAULT 'C';
 
 -- Migrate existing data from old columns to new columns

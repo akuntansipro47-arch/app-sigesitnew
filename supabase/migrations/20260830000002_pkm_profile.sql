@@ -31,8 +31,13 @@ BEGIN
   END IF;
 END $$;
 
--- RLS untuk storage
-ALTER TABLE storage.objects ENABLE ROW LEVEL SECURITY;
+-- RLS untuk storage (wrap in DO block since storage.objects may not be owned)
+DO $$
+BEGIN
+  ALTER TABLE storage.objects ENABLE ROW LEVEL SECURITY;
+EXCEPTION WHEN OTHERS THEN
+  -- skip if not owner
+END $$;
 
 CREATE POLICY "Public read access for pkm logos" 
   ON storage.objects FOR SELECT 

@@ -1360,7 +1360,8 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
     const currentEntries = loadedEntries || entries
     try {
       // Always calculate local max first to ensure we have a correct fallback
-      const localMaxEntryNumber = currentEntries.length > 0 ? Math.max(...currentEntries.map(e => e.entryNumber)) : 0
+      const entryNumbers = currentEntries.map(entry => entry.entryNumber).filter(Number.isFinite)
+      const localMaxEntryNumber = entryNumbers.length > 0 ? Math.max(...entryNumbers) : 0
       console.log('Local max entry number:', localMaxEntryNumber, 'Total entries:', currentEntries.length)
       
       const { data, error } = await supabase.rpc('get_next_entry_number', { officer_id: profile.id })
@@ -1374,7 +1375,9 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
       
       // Use the maximum between RPC value and local max + 1 to ensure we never go backwards
       const rpcValue = Number(data)
-      const nextNumber = Math.max(rpcValue, localMaxEntryNumber + 1)
+      const nextNumber = Number.isFinite(rpcValue) && rpcValue > 0
+        ? Math.max(Math.trunc(rpcValue), localMaxEntryNumber + 1)
+        : localMaxEntryNumber + 1
       setNextEntryNumber(nextNumber)
       console.log('Setting next entry number to:', nextNumber)
     } catch (err) {
@@ -1472,9 +1475,16 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
       let entryId = editing?.id
 
       if (!editing) {
+        const formEntryNumber = Number(data.get('entryNumber'))
+        const entryNumber = Number.isFinite(formEntryNumber) && formEntryNumber > 0
+          ? Math.trunc(formEntryNumber)
+          : Number.isFinite(nextEntryNumber) && nextEntryNumber > 0
+            ? Math.trunc(nextEntryNumber)
+            : 1
+
         // Create entry
         const { data: newEntry, error: entryError } = await supabase.from('entries').insert({
-          entry_number: nextEntryNumber,
+          entry_number: entryNumber,
           entry_date: String(data.get('entryDate')),
           officer_id: profile.id,
           kelurahan_id: selectedKelurahanId,

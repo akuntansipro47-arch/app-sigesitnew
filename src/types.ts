@@ -222,6 +222,7 @@ export type FamilyCard = {
   entryId: string
   kkSequence: number
   kkNumber: string
+  nikKepalaKeluarga: string
   kepalaKeluarga: string
   address: string
   totalJiwa: number

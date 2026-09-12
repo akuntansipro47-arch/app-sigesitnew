@@ -4,7 +4,7 @@ import './App.css'
 import { supabase, supabaseConfigured } from './lib/supabase'
 import { exportToExcel } from './utils/exportExcel'
 
-type View = 'beranda' | 'entry' | 'wilayah' | 'pengguna' | 'profile' | 'lokasi' | 'uji_air' | 'uji_udara'
+type View = 'beranda' | 'entry' | 'wilayah' | 'pengguna' | 'profile' | 'lokasi' | 'pangan' | 'uji_air' | 'uji_udara'
 type RegionLevel = 'kelurahan' | 'rw' | 'rt'
 type Region = { id: string; name: string; code?: string; kelurahanId?: string; rwId?: string }
 type UserRole = 'super_admin' | 'kader'
@@ -105,6 +105,62 @@ type AirQualityTest = {
 
 type AirQualityTestRow = { id: string; location_id: string; test_date: string; officer_id: string; temperature_1: number | null; temperature_2: number | null; temperature_3: number | null; temperature_unit: string; humidity_1: number | null; humidity_2: number | null; humidity_3: number | null; noise_1: number | null; noise_2: number | null; noise_3: number | null; lighting_1: number | null; lighting_2: number | null; lighting_3: number | null; pm25_1: number | null; pm25_2: number | null; pm25_3: number | null; pm10_1: number | null; pm10_2: number | null; pm10_3: number | null; ventilation_rate_1: number | null; ventilation_rate_2: number | null; ventilation_rate_3: number | null; notes: string | null }
 
+// Food Inspection types
+type FoodInspectionSample = {
+  nama_makanan: string
+  boraks: 'Positif' | 'Negatif' | ''
+  formalin: 'Positif' | 'Negatif' | ''
+  rodaminB: 'Positif' | 'Negatif' | ''
+  metanilYellow: 'Positif' | 'Negatif' | ''
+  eColi: 'Positif' | 'Negatif' | ''
+  remarks: string
+}
+
+type FoodInspectionResult = {
+  id: string
+  entryNumber: number
+  entryDate: string
+  entryDay?: string
+  jenisTppId?: string
+  address?: string
+  kelurahanId?: string
+  rwId?: string
+  rtId?: string
+  penanggungJawab?: string
+  phone?: string
+  hasilIkl: 'MMS' | 'TMS' | ''
+  samples: FoodInspectionSample[]
+  officerId: string
+  createdAt?: string
+  updatedAt?: string
+  overallStatus?: 'Lulus' | 'Tidak Lulus / Perlu tindak lanjut'
+}
+
+type FoodInspectionResultRow = {
+  id: string
+  entry_number: number
+  entry_date: string
+  entry_day: string | null
+  jenis_tpp_id: string | null
+  address: string | null
+  kelurahan_id: string | null
+  rw_id: string | null
+  rt_id: string | null
+  penanggung_jawab: string | null
+  phone: string | null
+  hasil_ikl: string | null
+  e_coli_result: string | null
+  samples: any[] | null
+  officer_id: string
+  created_at: string
+  updated_at: string
+}
+
+type GroupTpp = {
+  id: string
+  name: string
+}
+
 // PKM Info types
 type PKMInfo = {
   id: string
@@ -128,6 +184,7 @@ type FamilyCard = {
   entryId: string
   kkSequence: number
   kkNumber: string
+  nikKepalaKeluarga: string
   kepalaKeluarga: string
   address: string
   totalJiwa: number
@@ -344,6 +401,59 @@ function mapAirQualityTestRow(row: AirQualityTestRow): AirQualityTest {
   }
 }
 
+function mapFoodInspectionRow(row: FoodInspectionResultRow): FoodInspectionResult {
+  const rawSamples = row.samples && Array.isArray(row.samples) ? row.samples : []
+  const samples: FoodInspectionSample[] = rawSamples.map((s: any) => ({
+    nama_makanan: String(s?.nama_makanan ?? s?.nama ?? ''),
+    boraks: (s?.boraks ?? '') as 'Positif' | 'Negatif' | '',
+    formalin: (s?.formalin ?? '') as 'Positif' | 'Negatif' | '',
+    rodaminB: (s?.rodamin_b ?? s?.rodaminB ?? '') as 'Positif' | 'Negatif' | '',
+    metanilYellow: (s?.metanil_yellow ?? s?.metanilYellow ?? '') as 'Positif' | 'Negatif' | '',
+    eColi: (s?.e_coli ?? s?.eColi ?? '') as 'Positif' | 'Negatif' | '',
+    remarks: String(s?.remarks ?? ''),
+  }))
+
+  if (samples.length === 0 && row.e_coli_result) {
+    samples.push({
+      nama_makanan: '',
+      boraks: '',
+      formalin: '',
+      rodaminB: '',
+      metanilYellow: '',
+      eColi: row.e_coli_result as 'Positif' | 'Negatif' | '',
+      remarks: '',
+    })
+  } else if (samples.length > 0 && !samples[0].eColi && row.e_coli_result) {
+    samples[0].eColi = row.e_coli_result as 'Positif' | 'Negatif' | ''
+  }
+
+  const hasPositive = samples.some(s =>
+    s.boraks === 'Positif' || s.formalin === 'Positif' ||
+    s.rodaminB === 'Positif' || s.metanilYellow === 'Positif' || s.eColi === 'Positif'
+  )
+  const overallStatus = hasPositive ? 'Tidak Lulus / Perlu tindak lanjut' : 'Lulus'
+
+  return {
+    id: row.id,
+    entryNumber: row.entry_number,
+    entryDate: row.entry_date,
+    entryDay: row.entry_day ?? undefined,
+    jenisTppId: row.jenis_tpp_id ?? undefined,
+    address: row.address ?? undefined,
+    kelurahanId: row.kelurahan_id ?? undefined,
+    rwId: row.rw_id ?? undefined,
+    rtId: row.rt_id ?? undefined,
+    penanggungJawab: row.penanggung_jawab ?? undefined,
+    phone: row.phone ?? undefined,
+    hasilIkl: (row.hasil_ikl ?? '') as 'MMS' | 'TMS' | '',
+    samples,
+    officerId: row.officer_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    overallStatus,
+  }
+}
+
 function mapPKMInfoRow(row: PKMInfoRow): PKMInfo {
   return {
     id: row.id,
@@ -400,6 +510,7 @@ function App() {
   const [locations, setLocations] = useState<Location[]>([])
   const [waterTests, setWaterTests] = useState<WaterQualityTest[]>([])
   const [airTests, setAirTests] = useState<AirQualityTest[]>([])
+  const [foodInspections, setFoodInspections] = useState<FoodInspectionResult[]>([])
   const [entries] = useState<Entry[]>([])
   const [users] = useState<UserProfile[]>([])
   const reloadLocations = useCallback(async () => {
@@ -748,12 +859,12 @@ function App() {
           </div>
         )}
         <p className="side-label">MENU UTAMA</p><nav><button className={view === 'beranda' ? 'active' : ''} onClick={() => setView('beranda')} type="button"><span>⌂</span> Beranda</button><button className={view === 'entry' ? 'active' : ''} onClick={() => setView('entry')} type="button"><span>+</span> Entry Data</button></nav>
-        <p className="side-label">PEMERIKSAAN</p><nav><button className={view === 'uji_air' ? 'active' : ''} onClick={() => setView('uji_air')} type="button"><span>💧</span> Uji Air</button><button className={view === 'uji_udara' ? 'active' : ''} onClick={() => setView('uji_udara')} type="button"><span>🌬️</span> Uji Udara</button></nav>
+        <p className="side-label">PEMERIKSAAN</p><nav><button className={view === 'uji_air' ? 'active' : ''} onClick={() => setView('uji_air')} type="button"><span>💧</span> Uji Air</button><button className={view === 'uji_udara' ? 'active' : ''} onClick={() => setView('uji_udara')} type="button"><span>🌬️</span> Uji Udara</button><button className={view === 'pangan' ? 'active' : ''} onClick={() => setView('pangan')} type="button"><span>🍱</span> Hasil Pangan/Makanan</button></nav>
         <p className="side-label">DATA MASTER</p><nav><button className={view === 'wilayah' ? 'active' : ''} onClick={() => setView('wilayah')} type="button"><span>⌘</span> Wilayah</button><button className={view === 'lokasi' ? 'active' : ''} onClick={() => setView('lokasi')} type="button"><span>📍</span> Lokasi</button>{canAccessPengguna && <button className={view === 'pengguna' ? 'active' : ''} onClick={() => setView('pengguna')} type="button"><span>♙</span> Pengguna</button>}</nav>
         <p className="side-label">AKUN</p><nav><button className={view === 'profile' ? 'active' : ''} onClick={() => setView('profile')} type="button"><span>👤</span> Profil PKM</button></nav>
         <div className="sidebar-footer"><span className="sync-dot" /><div><strong>1 data belum sinkron</strong><small>Data akan terkirim saat online</small></div></div>
       </aside>
-      <section className="content">{view === 'entry' ? <EntryPage profile={profile} kelurahan={kelurahan} rw={rw} rt={rt} /> : view === 'wilayah' ? <WilayahPage kelurahan={kelurahan} rw={rw} rt={rt} setKelurahan={setKelurahan} setRw={setRw} setRt={setRt} /> : view === 'pengguna' && canAccessPengguna ? <PenggunaPage kelurahan={kelurahan} rw={rw} rt={rt} currentUserId={session?.user.id} /> : view === 'profile' ? <ProfilePage /> : view === 'lokasi' ? <LokasiPage kelurahan={kelurahan} rw={rw} rt={rt} locations={locations} reloadLocations={reloadLocations} /> : view === 'uji_air' ? <UjiAirPage profile={profile} locations={locations} kelurahan={kelurahan} waterTests={waterTests} setWaterTests={setWaterTests} /> : view === 'uji_udara' ? <UjiUdaraPage profile={profile} locations={locations} kelurahan={kelurahan} airTests={airTests} setAirTests={setAirTests} /> : <Dashboard view={view} setView={setView} pkmInfo={pkmInfo} kelurahan={kelurahan} rw={rw} rt={rt} locations={locations} waterTests={waterTests} airTests={airTests} entries={entries} users={users} />}</section>
+      <section className="content">{view === 'entry' ? <EntryPage profile={profile} kelurahan={kelurahan} rw={rw} rt={rt} /> : view === 'wilayah' ? <WilayahPage kelurahan={kelurahan} rw={rw} rt={rt} setKelurahan={setKelurahan} setRw={setRw} setRt={setRt} /> : view === 'pengguna' && canAccessPengguna ? <PenggunaPage kelurahan={kelurahan} rw={rw} rt={rt} currentUserId={session?.user.id} /> : view === 'profile' ? <ProfilePage /> : view === 'lokasi' ? <LokasiPage kelurahan={kelurahan} rw={rw} rt={rt} locations={locations} reloadLocations={reloadLocations} /> : view === 'uji_air' ? <UjiAirPage profile={profile} locations={locations} kelurahan={kelurahan} waterTests={waterTests} setWaterTests={setWaterTests} /> : view === 'uji_udara' ? <UjiUdaraPage profile={profile} locations={locations} kelurahan={kelurahan} airTests={airTests} setAirTests={setAirTests} /> : view === 'pangan' ? <PanganPage profile={profile} kelurahan={kelurahan} rw={rw} rt={rt} foodInspections={foodInspections} setFoodInspections={setFoodInspections} /> : <Dashboard view={view} setView={setView} pkmInfo={pkmInfo} kelurahan={kelurahan} rw={rw} rt={rt} locations={locations} waterTests={waterTests} airTests={airTests} entries={entries} users={users} foodInspections={foodInspections} />}</section>
     </section>
   </main>
 }
@@ -1119,7 +1230,7 @@ function WilayahPage({ kelurahan, rw, rt, setKelurahan, setRw, setRt }: { kelura
   )
 }
 
-function Dashboard({ view, setView, pkmInfo, kelurahan, rw, rt, locations, waterTests, airTests, entries, users }: { 
+function Dashboard({ view, setView, pkmInfo, kelurahan, rw, rt, locations, waterTests, airTests, entries, users, foodInspections }: { 
   view: View; 
   setView: (view: View) => void; 
   pkmInfo: PKMInfo | null;
@@ -1131,6 +1242,7 @@ function Dashboard({ view, setView, pkmInfo, kelurahan, rw, rt, locations, water
   airTests: AirQualityTest[];
   entries: Entry[];
   users: UserProfile[];
+  foodInspections: FoodInspectionResult[];
 }) {
   const title = 'Selamat pagi, Syifa.'
   const pkmName = pkmInfo?.namaPkm || 'PKM Padasuka'
@@ -1143,6 +1255,7 @@ function Dashboard({ view, setView, pkmInfo, kelurahan, rw, rt, locations, water
   const totalLokasi = locations.length
   const totalUjiAir = waterTests.length
   const totalUjiUdara = airTests.length
+  const totalPangan = foodInspections.length
   const totalEntries = entries.length
   const totalPengguna = users.length
   
@@ -1152,6 +1265,7 @@ function Dashboard({ view, setView, pkmInfo, kelurahan, rw, rt, locations, water
   const newEntriesLast7Days = entries.filter(e => new Date(e.entryDate) >= last7Days).length
   const newWaterTestsLast7Days = waterTests.filter(e => new Date(e.testDate) >= last7Days).length
   const newAirTestsLast7Days = airTests.filter(e => new Date(e.testDate) >= last7Days).length
+  const newFoodInspeksiLast7Days = foodInspections.filter(e => new Date(e.entryDate) >= last7Days).length
   
   // Waktu terakhir update
   const getDate = (item: any) => {
@@ -1160,13 +1274,13 @@ function Dashboard({ view, setView, pkmInfo, kelurahan, rw, rt, locations, water
     if (item.createdAt) return new Date(item.createdAt).getTime()
     return 0
   }
-  const allItems = [...waterTests, ...airTests, ...entries]
+  const allItems = [...waterTests, ...airTests, ...entries, ...foodInspections]
   const lastUpdate = allItems.sort((a, b) => getDate(b) - getDate(a))[0]
   const lastUpdateTime = lastUpdate 
     ? new Date(getDate(lastUpdate)).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })
     : '-'
 
-  if (view !== 'beranda') return <section className="master-page"><div className="page-heading"><div><p className="eyebrow">DATA MASTER</p><h1>{view === 'wilayah' ? 'Data Wilayah' : view === 'pengguna' ? 'Pengguna Kader & Relawan' : view === 'lokasi' ? 'Data Lokasi' : view === 'uji_air' ? 'Uji Kualitas Air' : view === 'uji_udara' ? 'Uji Kualitas Udara' : 'Entry Data'}</h1><p>Kelola data yang digunakan oleh seluruh petugas lapangan.</p></div></div></section>
+  if (view !== 'beranda') return <section className="master-page"><div className="page-heading"><div><p className="eyebrow">DATA MASTER</p><h1>{view === 'wilayah' ? 'Data Wilayah' : view === 'pengguna' ? 'Pengguna Kader & Relawan' : view === 'lokasi' ? 'Data Lokasi' : view === 'uji_air' ? 'Uji Kualitas Air' : view === 'uji_udara' ? 'Uji Kualitas Udara' : view === 'pangan' ? 'Hasil Pemeriksaan Pangan/Makanan' : 'Entry Data'}</h1><p>Kelola data yang digunakan oleh seluruh petugas lapangan.</p></div></div></section>
   return <><div className="page-heading dashboard-heading"><div><p className="eyebrow">DASHBOARD LAPANGAN</p><h1>{title}</h1><p>Berikut ringkasan pendataan wilayah kerja {pkmName} hari ini.</p></div><button className="primary" onClick={() => setView('entry')} type="button">+ Input data rumah</button></div>
   
   {/* Grid Statistik Utama */}
@@ -1203,7 +1317,15 @@ function Dashboard({ view, setView, pkmInfo, kelurahan, rw, rt, locations, water
         <small>+{newAirTestsLast7Days} 7 hari terakhir</small>
       </div>
     </article>
-    <article className="stat-card clickable" onClick={() => setView('entry')}>
+     <article className="stat-card clickable" onClick={() => setView('pangan')}>
+       <span className="stat-icon green">🍱</span>
+       <div>
+         <p>Hasil Pangan/Makanan</p>
+         <strong>{totalPangan}</strong>
+         <small>+{newFoodInspeksiLast7Days} 7 hari terakhir</small>
+       </div>
+     </article>
+     <article className="stat-card clickable" onClick={() => setView('entry')}>
       <span className="stat-icon gold">⌂</span>
       <div>
         <p>Rumah Terdata</p>
@@ -1330,6 +1452,7 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
               entryId: fc.entry_id,
               kkSequence: fc.kk_sequence,
               kkNumber: fc.kk_number,
+              nikKepalaKeluarga: fc.nik_kepala_keluarga || '',
               kepalaKeluarga: fc.kepala_keluarga || '',
               address: fc.address,
               totalJiwa: fc.total_jiwa,
@@ -1416,7 +1539,8 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
       entryId: '',
       kkSequence: familyCards.length + 1,
       kkNumber: '',
-      kepalaKeluarga: familyCards.length === 0 ? 'Kepala Keluarga Utama' : '',
+      nikKepalaKeluarga: '',
+      kepalaKeluarga: '',
       address: '',
       totalJiwa: 0,
       jiwaMenetap: 0,
@@ -1526,6 +1650,7 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
             entry_id: entryId,
             kk_sequence: fc.kkSequence,
             kk_number: fc.kkNumber,
+            nik_kepala_keluarga: fc.nikKepalaKeluarga,
             kepala_keluarga: fc.kepalaKeluarga,
             address: fc.address,
             total_jiwa: fc.totalJiwa,
@@ -1546,6 +1671,7 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
           const { error: fcUpdateError } = await supabase.from('family_cards').update({
             kk_sequence: fc.kkSequence,
             kk_number: fc.kkNumber,
+            nik_kepala_keluarga: fc.nikKepalaKeluarga,
             kepala_keluarga: fc.kepalaKeluarga,
             address: fc.address,
             total_jiwa: fc.totalJiwa,
@@ -1687,9 +1813,14 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
             <div className="form-grid">
               <label>No. KK<input value={fc.kkNumber} onChange={(e) => {
                 const updated = [...familyCards]
-                updated[index].kkNumber = e.target.value
+                updated[index].kkNumber = e.target.value.replace(/\D/g, '').slice(0, 16)
                 setFamilyCards(updated)
-              }} placeholder="16 digit nomor KK" required /></label>
+              }} inputMode="numeric" maxLength={16} placeholder="Maksimal 16 digit nomor KK" required /></label>
+              <label>NIK Kepala Keluarga<input value={fc.nikKepalaKeluarga} onChange={(e) => {
+                const updated = [...familyCards]
+                updated[index].nikKepalaKeluarga = e.target.value.replace(/\D/g, '').slice(0, 16)
+                setFamilyCards(updated)
+              }} inputMode="numeric" maxLength={16} placeholder="Maksimal 16 digit NIK kepala keluarga" /></label>
               <label>Nama Kepala Keluarga<input value={fc.kepalaKeluarga} onChange={(e) => {
                 const updated = [...familyCards]
                 updated[index].kepalaKeluarga = e.target.value
@@ -1710,11 +1841,12 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
                 updated[index].jiwaMenetap = parseInt(e.target.value) || 0
                 setFamilyCards(updated)
               }} inputMode="numeric" /></label>
-              <label>Jumlah Sarana Jamban<input type="number" value={fc.jambanCount || ''} onChange={(e) => {
+              <label>Jumlah Sarana Jamban<input type="text" value={fc.jambanCount || ''} onChange={(e) => {
+                const digits = e.target.value.replace(/\D/g, '')
                 const updated = [...familyCards]
-                updated[index].jambanCount = parseInt(e.target.value) || 0
+                updated[index].jambanCount = digits === '' ? 0 : Number(digits)
                 setFamilyCards(updated)
-              }} inputMode="numeric" disabled={fc.jambanCount === 0} /></label>
+              }} inputMode="numeric" /></label>
             </div>
 
             <button className="text-button" onClick={() => setCurrentKkIndex(index)} type="button">
@@ -1725,10 +1857,10 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
               <div style={{ marginTop: '16px' }}>
                 {Object.entries(questionnaireData).map(([pillar, questions]) => (
                   <div key={pillar} style={{ marginBottom: '24px' }}>
-                    <h3 style={{ marginBottom: '12px', textTransform: 'capitalize' }}>{pillar.replace('_', ' ')}</h3>
+                    <h3 style={{ marginBottom: '12px', textTransform: 'capitalize' }}>{pillar === 'jamban' ? 'Fasilitas Jamban' : pillar.replace('_', ' ')}</h3>
                     {questions.map(q => {
                       const tempFamilyCardId = fc.id || `temp-${index}`
-                      const isSingleChoice = pillar === 'jamban' || pillar === 'sumber_air'
+                      const isSingleChoice = pillar === 'sumber_air'
                       return (
                         <div key={q.code} style={{ marginBottom: '8px' }}>
                           <label style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -3810,6 +3942,412 @@ function PenggunaPage({ kelurahan, rw, rt, currentUserId }: { kelurahan: Region[
         </div>
       </article>)}
     </div>
+  </section>
+}
+
+function PanganPage({ profile, kelurahan, rw, rt, foodInspections, setFoodInspections }: {
+  profile: UserProfile | null;
+  kelurahan: Region[];
+  rw: Region[];
+  rt: Region[];
+  foodInspections: FoodInspectionResult[];
+  setFoodInspections: (inspections: FoodInspectionResult[]) => void;
+}) {
+  const inspections = foodInspections
+  const setInspections = setFoodInspections
+  const [loading, setLoading] = useState(true)
+  const [groupTppList, setGroupTppList] = useState<GroupTpp[]>([])
+  const [formOpen, setFormOpen] = useState(false)
+  const [filterKelurahanId, setFilterKelurahanId] = useState('')
+  const [searchKeyword, setSearchKeyword] = useState('')
+  const [editing, setEditing] = useState<FoodInspectionResult | null>(null)
+  const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState('')
+
+  const [formData, setFormData] = useState<{
+    entryDate: string
+    jenisTppId: string
+    kelurahanId: string
+    rwId: string
+    rtId: string
+    address: string
+    penanggungJawab: string
+    phone: string
+    hasilIkl: 'MMS' | 'TMS' | ''
+    samples: FoodInspectionSample[]
+  }>({
+    entryDate: new Date().toISOString().split('T')[0],
+    jenisTppId: '',
+    kelurahanId: profile?.kelurahanId || kelurahan[0]?.id || '',
+    rwId: '',
+    rtId: '',
+    address: '',
+    penanggungJawab: profile?.fullName || '',
+    phone: profile?.phone || '',
+    hasilIkl: '',
+    samples: [emptySample()],
+  })
+
+  const rwOptions = rw.filter((item) => !formData.kelurahanId || item.kelurahanId === formData.kelurahanId)
+  const rtOptions = rt.filter((item) => !formData.rwId || item.rwId === formData.rwId)
+
+  function emptySample(): FoodInspectionSample {
+    return { nama_makanan: '', boraks: '', formalin: '', rodaminB: '', metanilYellow: '', eColi: '', remarks: '' }
+  }
+
+  function updateSample(idx: number, patch: Partial<FoodInspectionSample>) {
+    setFormData((prev) => ({
+      ...prev,
+      samples: prev.samples.map((s, i) => (i === idx ? { ...s, ...patch } : s)),
+    }))
+  }
+
+  function addSample() {
+    setFormData((prev) => ({ ...prev, samples: [...prev.samples, emptySample()] }))
+  }
+
+  function removeSample(idx: number) {
+    if (formData.samples.length <= 1) return
+    setFormData((prev) => ({ ...prev, samples: prev.samples.filter((_, i) => i !== idx) }))
+  }
+
+  async function loadInspections() {
+    if (!supabase || !profile) { setLoading(false); return }
+    setLoading(true)
+    try {
+      const { data, error: loadError } = await supabase
+        .from('food_inspection_results')
+        .select('*')
+        .eq('officer_id', profile.id)
+        .order('entry_date', { ascending: false })
+      if (loadError) {
+        setError(`Gagal memuat data hasil pemeriksaan: ${loadError.message}`)
+        setLoading(false)
+        return
+      }
+      setInspections(!data || data.length === 0 ? [] : (data as FoodInspectionResultRow[]).map(mapFoodInspectionRow))
+    } catch (err) {
+      setError(`Terjadi kesalahan: ${err instanceof Error ? err.message : 'Unknown error'}`)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function loadGroupTpp() {
+    if (!supabase) { setGroupTppList([]); return }
+    try {
+      const { data, error: loadError } = await supabase.from('group_tpp').select('id, name').order('name')
+      if (loadError) { console.error('Error loading group_tpp:', loadError.message); return }
+      if (data) setGroupTppList(data as GroupTpp[])
+    } catch (err) {
+      console.error('Unexpected error loading group_tpp:', err)
+    }
+  }
+
+  useEffect(() => { void loadGroupTpp() }, [])
+  useEffect(() => { if (profile) void loadInspections() }, [profile])
+
+  function openForm(inspection?: FoodInspectionResult) {
+    setEditing(inspection ?? null)
+    setError('')
+    if (inspection) {
+      setFormData({
+        entryDate: inspection.entryDate,
+        jenisTppId: inspection.jenisTppId || '',
+        kelurahanId: inspection.kelurahanId || kelurahan[0]?.id || '',
+        rwId: inspection.rwId || '',
+        rtId: inspection.rtId || '',
+        address: inspection.address || '',
+        penanggungJawab: inspection.penanggungJawab || '',
+        phone: inspection.phone || '',
+        hasilIkl: inspection.hasilIkl,
+        samples: inspection.samples.length > 0 ? inspection.samples : [emptySample()],
+      })
+    } else {
+      setFormData({
+        entryDate: new Date().toISOString().split('T')[0],
+        jenisTppId: '',
+        kelurahanId: profile?.kelurahanId || kelurahan[0]?.id || '',
+        rwId: '',
+        rtId: '',
+        address: '',
+        penanggungJawab: profile?.fullName || '',
+        phone: profile?.phone || '',
+        hasilIkl: '',
+        samples: [emptySample()],
+      })
+    }
+    setFormOpen(true)
+  }
+
+  async function save(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!supabase || !profile) return
+    setSubmitting(true)
+    setError('')
+    if (!formData.entryDate) { setError('Tanggal harus diisi'); setSubmitting(false); return }
+    const dayName = new Date(formData.entryDate).toLocaleDateString('id-ID', { weekday: 'long' })
+    const samplesPayload = formData.samples.map((s) => ({
+      jenis_makanan: s.nama_makanan,
+      boraks: s.boraks,
+      formalin: s.formalin,
+      rodamin_b: s.rodaminB,
+      metanil_yellow: s.metanilYellow,
+      e_coli: s.eColi,
+      keterangan: s.remarks,
+    }))
+    const payload: any = {
+      entry_date: formData.entryDate,
+      entry_day: dayName,
+      jenis_tpp_id: formData.jenisTppId || null,
+      kelurahan_id: formData.kelurahanId || null,
+      rw_id: formData.rwId || null,
+      rt_id: formData.rtId || null,
+      address: formData.address || null,
+      penanggung_jawab: formData.penanggungJawab || null,
+      phone: formData.phone || null,
+      hasil_ikl: formData.hasilIkl || null,
+      officer_id: profile.id,
+      samples: samplesPayload,
+    }
+    try {
+      let result
+      if (editing) {
+        result = await supabase.from('food_inspection_results').update(payload).eq('id', editing.id)
+      } else {
+        result = await supabase.from('food_inspection_results').insert(payload)
+      }
+      if (result.error) throw result.error
+      setFormOpen(false)
+      setEditing(null)
+      void loadInspections()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Gagal menyimpan hasil pemeriksaan')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  async function remove(item: FoodInspectionResult) {
+    if (!window.confirm(`Hapus hasil pemeriksaan tanggal ${item.entryDate}?`)) return
+    if (!supabase) return
+    const { error: delError } = await supabase.from('food_inspection_results').delete().eq('id', item.id)
+    if (delError) { window.alert(`Gagal menghapus hasil pemeriksaan: ${delError.message}`); return }
+    void loadInspections()
+  }
+
+  function exportExcel() {
+    if (filtered.length === 0) { window.alert('Tidak ada data hasil pemeriksaan untuk diexport.'); return }
+    const header = ['No', 'Tanggal', 'Hari', 'Jenis TPP', 'Kelurahan', 'RW', 'RT', 'Alamat', 'Penanggung Jawab', 'Phone', 'Hasil IKL', 'Jenis Makanan', 'Boraks', 'Formalin', 'Rodamin B', 'Metanil Yellow', 'E-coli', 'Keterangan', 'Status']
+    const rows: (string | number | null)[][] = []
+    filtered.forEach((item, idx) => {
+      const tppName = item.jenisTppId ? groupTppList.find((g) => g.id === item.jenisTppId)?.name : undefined
+      const kelName = item.kelurahanId ? kelurahan.find((k) => k.id === item.kelurahanId)?.name : undefined
+      const rwName = item.rwId ? rw.find((r) => r.id === item.rwId)?.name : undefined
+      const rtName = item.rtId ? rt.find((r) => r.id === item.rtId)?.name : undefined
+      if (item.samples.length === 0) {
+        rows.push([idx + 1, item.entryDate, item.entryDay ?? null, tppName ?? null, kelName ?? null, rwName ?? null, rtName ?? null, item.address ?? null, item.penanggungJawab ?? null, item.phone ?? null, item.hasilIkl || null, null, null, null, null, null, null, null, item.overallStatus ?? null])
+      } else {
+        item.samples.forEach((s) => {
+          rows.push([idx + 1, item.entryDate, item.entryDay ?? null, tppName ?? null, kelName ?? null, rwName ?? null, rtName ?? null, item.address ?? null, item.penanggungJawab ?? null, item.phone ?? null, item.hasilIkl || null, s.nama_makanan || null, s.boraks || null, s.formalin || null, s.rodaminB || null, s.metanilYellow || null, s.eColi || null, s.remarks || null, item.overallStatus ?? null])
+        })
+      }
+    })
+    const today = new Date().toISOString().slice(0, 10)
+    exportToExcel({ fileName: `hasil_pangan_${today}.xlsx`, sheetName: 'Hasil Pangan/Makanan', header, rows })
+  }
+
+  const filtered = inspections.filter((item) => {
+    if (filterKelurahanId && item.kelurahanId !== filterKelurahanId) return false
+    if (searchKeyword) {
+      const kw = searchKeyword.toLowerCase()
+      const tppName = item.jenisTppId ? groupTppList.find((g) => g.id === item.jenisTppId)?.name : undefined
+      const inHeader = (item.penanggungJawab || '').toLowerCase().includes(kw)
+        || (item.phone || '').toLowerCase().includes(kw)
+        || (item.address || '').toLowerCase().includes(kw)
+        || (tppName || '').toLowerCase().includes(kw)
+      const inSamples = item.samples.some((s) => (s.nama_makanan || '').toLowerCase().includes(kw) || (s.remarks || '').toLowerCase().includes(kw))
+      if (!inHeader && !inSamples) return false
+    }
+    return true
+  })
+
+  if (loading) return <section className="master-page"><div className="empty-state"><span>🍱</span><h2>Memuat data hasil pemeriksaan pangan…</h2></div></section>
+
+  return <section className="master-page">
+    <div className="page-heading">
+      <div><p className="eyebrow">PEMERIKSAAN</p><h1>Hasil Pemeriksaan Pangan/Makanan</h1><p>Kelola hasil pemeriksaan pangan/makanan (Boraks, Formalin, Rodamin B, Metanil Yellow, E-coli).</p></div>
+      <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+        <button className="secondary" onClick={exportExcel} type="button" disabled={inspections.length === 0}>Export Excel</button>
+        <button className="primary" onClick={() => openForm()} type="button">+ Tambah Hasil</button>
+      </div>
+    </div>
+
+    {formOpen && <form className="entry-form compact-form" onSubmit={save}>
+      <div className="page-heading">
+        <div>
+          <p className="eyebrow">PEMERIKSAAN</p>
+          <h1>{editing ? 'Edit' : 'Tambah'} Hasil Pemeriksaan Pangan</h1>
+          <p>Isi data pemeriksaan pangan/makanan dan tiap sampel makanan.</p>
+        </div>
+      </div>
+      {error && <div className="error-message">{error}</div>}
+
+      <section className="form-section">
+        <h2>Informasi Pemeriksaan</h2>
+        <div className="form-grid">
+          <label>Tanggal<input type="date" value={formData.entryDate} onChange={(e) => setFormData({ ...formData, entryDate: e.target.value })} required /></label>
+          <label>Hasil IKL
+            <select value={formData.hasilIkl} onChange={(e) => setFormData({ ...formData, hasilIkl: e.target.value as 'MMS' | 'TMS' | '' })}>
+              <option value="">Belum diperiksa</option>
+              <option value="MMS">MMS</option>
+              <option value="TMS">TMS</option>
+            </select>
+          </label>
+          <label>Jenis TPP
+            <select value={formData.jenisTppId} onChange={(e) => setFormData({ ...formData, jenisTppId: e.target.value })}>
+              <option value="">Pilih jenis TPP</option>
+              {groupTppList.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
+            </select>
+          </label>
+          <label>Kelurahan
+            <select value={formData.kelurahanId} onChange={(e) => setFormData({ ...formData, kelurahanId: e.target.value, rwId: '', rtId: '' })} required>
+              <option value="">Pilih kelurahan</option>
+              {kelurahan.map((k) => <option key={k.id} value={k.id}>{k.name}</option>)}
+            </select>
+          </label>
+          <label>RW
+            <select value={formData.rwId} onChange={(e) => setFormData({ ...formData, rwId: e.target.value, rtId: '' })} disabled={!formData.kelurahanId}>
+              <option value="">Pilih RW</option>
+              {rwOptions.map((r) => <option key={r.id} value={r.id}>RW {r.name}</option>)}
+            </select>
+          </label>
+          <label>RT
+            <select value={formData.rtId} onChange={(e) => setFormData({ ...formData, rtId: e.target.value })} disabled={!formData.rwId}>
+              <option value="">Pilih RT</option>
+              {rtOptions.map((r) => <option key={r.id} value={r.id}>RT {r.name}</option>)}
+            </select>
+          </label>
+          <label>Alamat<textarea className="notes-textarea" style={{ width: '100%', minHeight: '60px', height: '60px' }} value={formData.address} onChange={(e) => setFormData({ ...formData, address: e.target.value })} rows={2} placeholder="Alamat lokasi pemeriksaan..." /></label>
+          <label>Penanggung Jawab<input value={formData.penanggungJawab} onChange={(e) => setFormData({ ...formData, penanggungJawab: e.target.value })} placeholder="Nama penanggung jawab" /></label>
+          <label>Phone<input type="tel" value={formData.phone} onChange={(e) => setFormData({ ...formData, phone: e.target.value })} placeholder="Nomor HP" /></label>
+        </div>
+      </section>
+
+      <section className="form-section">
+        <h2>Sampel Makanan</h2>
+        {formData.samples.map((s, idx) => (
+          <div key={idx} className="form-grid" style={{ marginBottom: idx === formData.samples.length - 1 ? '8px' : '16px' }}>
+            <label><span className="entry-no">{idx + 1}.</span> Nama Makanan<input value={s.nama_makanan} onChange={(e) => updateSample(idx, { nama_makanan: e.target.value })} placeholder="Nama makanan/minuman" /></label>
+            <label>Boraks
+              <select value={s.boraks} onChange={(e) => updateSample(idx, { boraks: e.target.value as 'Positif' | 'Negatif' | '' })}>
+                <option value="">-</option>
+                <option value="Positif">Positif</option>
+                <option value="Negatif">Negatif</option>
+              </select>
+            </label>
+            <label>Formalin
+              <select value={s.formalin} onChange={(e) => updateSample(idx, { formalin: e.target.value as 'Positif' | 'Negatif' | '' })}>
+                <option value="">-</option>
+                <option value="Positif">Positif</option>
+                <option value="Negatif">Negatif</option>
+              </select>
+            </label>
+            <label>Rodamin B
+              <select value={s.rodaminB} onChange={(e) => updateSample(idx, { rodaminB: e.target.value as 'Positif' | 'Negatif' | '' })}>
+                <option value="">-</option>
+                <option value="Positif">Positif</option>
+                <option value="Negatif">Negatif</option>
+              </select>
+            </label>
+            <label>Metanil Yellow
+              <select value={s.metanilYellow} onChange={(e) => updateSample(idx, { metanilYellow: e.target.value as 'Positif' | 'Negatif' | '' })}>
+                <option value="">-</option>
+                <option value="Positif">Positif</option>
+                <option value="Negatif">Negatif</option>
+              </select>
+            </label>
+            <label>E-coli
+              <select value={s.eColi} onChange={(e) => updateSample(idx, { eColi: e.target.value as 'Positif' | 'Negatif' | '' })}>
+                <option value="">-</option>
+                <option value="Positif">Positif</option>
+                <option value="Negatif">Negatif</option>
+              </select>
+            </label>
+            <label>Keterangan<textarea className="notes-textarea" style={{ width: '100%', minHeight: '60px', height: '60px' }} value={s.remarks} onChange={(e) => updateSample(idx, { remarks: e.target.value })} rows={2} placeholder="Keterangan sampel..." /></label>
+          </div>
+        ))}
+        <div style={{ marginTop: '8px' }}>
+          <button className="text-button" onClick={addSample} type="button">+ Tambah Sampel</button>
+          {formData.samples.length > 1 && <button className="text-button" onClick={() => removeSample(formData.samples.length - 1)} type="button">Hapus Sampel Terakhir</button>}
+        </div>
+      </section>
+
+      <div className="form-actions" style={{ marginTop: '16px' }}>
+        <button className="secondary" onClick={() => setFormOpen(false)} type="button">Kembali</button>
+        <button className="primary" disabled={submitting} type="submit">{submitting ? 'Menyimpan...' : 'Simpan'}</button>
+      </div>
+    </form>}
+
+    {!formOpen && inspections.length === 0 && <div className="empty-state"><span>🍱</span><h2>Belum ada data hasil pemeriksaan pangan/makanan</h2><p>Klik tombol di atas untuk menambahkan hasil pemeriksaan baru.</p></div>}
+
+    {!formOpen && inspections.length > 0 && (
+      <>
+        <div className="form-section" style={{ padding: '16px', marginBottom: '20px' }}>
+          <div className="form-grid" style={{ gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px', margin: 0 }}>
+            <label>Filter Kelurahan
+              <select value={filterKelurahanId} onChange={(e) => { setFilterKelurahanId(e.target.value) }}>
+                <option value="">Semua Kelurahan</option>
+                {kelurahan.map((k) => <option key={k.id} value={k.id}>{k.name}</option>)}
+              </select>
+            </label>
+            <label>Pencarian
+              <input type="text" value={searchKeyword} onChange={(e) => setSearchKeyword(e.target.value)} placeholder="Nama makanan / penanggung jawab..." />
+            </label>
+            <div style={{ display: 'flex', alignItems: 'flex-end' }}>
+              <button className="secondary" onClick={() => { setFilterKelurahanId(''); setSearchKeyword('') }} style={{ width: '100%' }}>Reset Filter</button>
+            </div>
+          </div>
+        </div>
+        <div className="data-table-container">
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>No</th><th>Tanggal</th><th>Jenis TPP</th><th>Lokasi</th><th>Penanggung Jawab</th><th>Hasil IKL</th><th>Sampel</th><th>Status</th><th>Aksi</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((item, idx) => {
+                const kelName = item.kelurahanId ? kelurahan.find((k) => k.id === item.kelurahanId)?.name : undefined
+                const rwName = item.rwId ? rw.find((r) => r.id === item.rwId)?.name : undefined
+                const rtName = item.rtId ? rt.find((r) => r.id === item.rtId)?.name : undefined
+                const tppName = item.jenisTppId ? groupTppList.find((g) => g.id === item.jenisTppId)?.name : undefined
+                const lokasiCell = [kelName, rwName, rtName].filter(Boolean).join(' / ') || '-'
+                const foodNames = item.samples.map((s) => s.nama_makanan).filter(Boolean).join(', ') || '-'
+                return (
+                  <tr key={item.id}>
+                    <td style={{ textAlign: 'center', fontWeight: '600' }}> {idx + 1}</td>
+                    <td>{item.entryDate}</td>
+                    <td>{tppName || '-'}</td>
+                    <td>{lokasiCell}</td>
+                    <td>{item.penanggungJawab || '-'}</td>
+                    <td>{item.hasilIkl || '-'}</td>
+                    <td>{foodNames}</td>
+                    <td><span style={{ color: item.overallStatus === 'Lulus' ? '#16a34a' : '#b91c1c', fontWeight: 600 }}>{item.overallStatus || '-'}</span></td>
+                    <td>
+                      <div className="entry-actions">
+                        <button className="text-button" onClick={() => openForm(item)} type="button">Edit</button>
+                        <button className="text-button" onClick={() => remove(item)} type="button">Hapus</button>
+                      </div>
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      </>
+    )}
   </section>
 }
 

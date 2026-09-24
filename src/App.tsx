@@ -1,14 +1,16 @@
-import { useCallback, useEffect, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import './App.css'
 import { supabase, supabaseConfigured } from './lib/supabase'
 import { exportToExcel } from './utils/exportExcel'
+import { loadSettings, saveSettings, DEFAULT_SETTINGS, themes, getThemeById, type AppSettings, type ThemeId, type Language } from './utils/settings'
+import { canAccessModule, getDefaultModuleAccess, MODULES, ROLE_LABELS } from './lib/auth'
 
-type View = 'beranda' | 'entry' | 'wilayah' | 'pengguna' | 'profile' | 'lokasi' | 'pangan' | 'uji_air' | 'uji_udara'
+type View = 'beranda' | 'entry' | 'wilayah' | 'pengguna' | 'profile' | 'lokasi' | 'pangan' | 'uji_air' | 'uji_udara' | 'group_tpp' | 'laporan' | 'laporan_dbd' | 'settings'
 type RegionLevel = 'kelurahan' | 'rw' | 'rt'
 type Region = { id: string; name: string; code?: string; kelurahanId?: string; rwId?: string }
-type UserRole = 'super_admin' | 'kader'
-type ModuleAccess = { entry: boolean; wilayah: boolean; pengguna: boolean; lokasi: boolean; uji_air: boolean; uji_udara: boolean }
+type UserRole = 'super_admin' | 'admin' | 'kader'
+type ModuleAccess = { entry: boolean; wilayah: boolean; pengguna: boolean; lokasi: boolean; uji_air: boolean; uji_udara: boolean; pangan: boolean; group_tpp: boolean }
 type UserProfile = {
   id: string
   fullName: string
@@ -23,8 +25,9 @@ type UserProfile = {
   isActive: boolean
   moduleAccess: ModuleAccess
   isTempPassword?: boolean
+  lastPassword?: string | null
 }
-type ProfileRow = { id: string; full_name: string; username: string; nik: string; phone: string; email: string | null; role: UserRole; kelurahan_id: string | null; rw_id: string | null; rt_id: string | null; is_active: boolean; module_access: Partial<ModuleAccess> | null; is_temp_password: boolean | null }
+type ProfileRow = { id: string; full_name: string; username: string; nik: string; phone: string; email: string | null; role: UserRole; kelurahan_id: string | null; rw_id: string | null; rt_id: string | null; is_active: boolean; module_access: Partial<ModuleAccess> | null; is_temp_password: boolean | null; last_password: string | null }
 
 // Location module types
 type Location = {
@@ -219,10 +222,12 @@ type Question = {
 }
 
 const questionnaireData: Record<string, Question[]> = {
-  jamban: [
+  fasilitas_jamban: [
     { code: 'bab_di_jamban', text: 'Buang Air Besar di Jamban' },
     { code: 'jamban_milik_sendiri', text: 'Jamban Milik Sendiri' },
     { code: 'kloset_leher_angsa', text: 'Kloset Leher Angsa' },
+  ],
+  jamban: [
     { code: 'septik_sedot_3_5_tahun', text: 'Tangki septik disedot setidaknya sekali dalam 3-5 tahun terakhir' },
     { code: 'septik_sedot_5_tahun', text: 'Tangki septik yang tidak pernah disedot, atau disedot > dari 5 tahun terakhir' },
     { code: 'cubluk_lubang_tanah', text: 'Cubluk / Lubang Tanah' },
@@ -281,8 +286,9 @@ function mapProfileRow(row: ProfileRow): UserProfile {
     id: row.id, fullName: row.full_name, username: row.username, nik: row.nik, phone: row.phone, email: row.email,
     role: row.role, kelurahanId: row.kelurahan_id ?? undefined, rwId: row.rw_id ?? undefined, rtId: row.rt_id ?? undefined,
     isActive: row.is_active,
-    moduleAccess: { entry: true, wilayah: true, pengguna: false, lokasi: true, uji_air: true, uji_udara: true, ...row.module_access },
+    moduleAccess: { ...getDefaultModuleAccess(row.role), ...row.module_access },
     isTempPassword: row.is_temp_password ?? false,
+    lastPassword: row.last_password ?? null,
   }
 }
 
@@ -332,9 +338,9 @@ function mapWaterQualityTestRow(row: WaterQualityTestRow): WaterQualityTest {
 }
 
 // Aturan baru: kolom entry Uji Air hanya boleh berisi angka atau simbol matematika:
-// <, >, =, +, -, /
+// <, >, =, +, -, /, koma, titik
 // Catatan dikecualikan (bebas).
-const ujiAirEntryPattern = /^[0-9<>=+\-\/]*$/
+const ujiAirEntryPattern = /^[0-9<>=+\-\/,.]*$/
 
 function isEmptyUjiAirValue(value: unknown) {
   return value === null || value === undefined || value === ''
@@ -367,6 +373,25 @@ function formatWaterValue(value: number | string | null | undefined, unit?: stri
   const text = typeof value === 'number' ? String(value) : String(value).trim()
   if (text === '') return '-'
   return unit ? `${text} ${unit}` : text
+}
+
+function isEmptyUjiUdaraValue(value: number | undefined) {
+  return value === undefined
+}
+
+function hasEmptyUjiUdaraValues(values: Array<number | undefined>) {
+  return values.some(isEmptyUjiUdaraValue)
+}
+
+function formatUjiUdaraValues(values: Array<number | undefined>): ReactNode {
+  return values.map((value, index) => (
+    <span key={index}>
+      {index > 0 && '/'}
+      {isEmptyUjiUdaraValue(value)
+        ? <span className="uji-udara-empty-value">-</span>
+        : value}
+    </span>
+  ))
 }
 
 function mapAirQualityTestRow(row: AirQualityTestRow): AirQualityTest {
@@ -487,6 +512,141 @@ async function getFunctionErrorMessage(error: unknown): Promise<string | null> {
   return error instanceof Error ? error.message : null
 }
 
+// --- Penanganan sesi untuk edge function admin-users -------------------------
+// Pesan "Tidak terautentikasi" berasal dari fungsi ketika JWT yang dikirim tidak
+// valid/kedaluwarsa. Sering terjadi karena token 1 jam kedaluwarsa sementara
+// refresh token belum sempat (atau gagal) diperbarui. Kita refresh proaktif,
+// serialize agar tidak balapan, dan beri pesan yang jelas bila refresh gagal.
+
+function getFunctionStatus(error: unknown): number | null {
+  if (error && typeof error === 'object' && 'context' in error) {
+    const context = (error as { context?: unknown }).context
+    if (context && typeof context === 'object' && 'status' in context) {
+      const status = (context as { status?: unknown }).status
+      if (typeof status === 'number') return status
+    }
+  }
+  return null
+}
+
+/** Sisa umur access token (detik) dari klaim `exp`; null bila tidak bisa dibaca. */
+function tokenSecondsLeft(token: string): number | null {
+  try {
+    const payload = token.split('.')[1]
+    if (!payload) return null
+    const claims = JSON.parse(atob(payload.replace(/-/g, '+').replace(/_/g, '/'))) as { exp?: number }
+    return typeof claims.exp === 'number' ? claims.exp - Math.floor(Date.now() / 1000) : null
+  } catch {
+    return null
+  }
+}
+
+const SESSION_HELP = 'Sesi login Anda sudah tidak berlaku. Silakan klik "Keluar" lalu masuk kembali.'
+
+type TokenRefresh = { token: string | null; reason: string | null }
+let activeTokenRefresh: Promise<TokenRefresh> | null = null
+
+/** Refresh sesi dengan single-flight supaya dua permintaan bersamaan tidak balapan. */
+function refreshAccessToken(client: NonNullable<typeof supabase>): Promise<TokenRefresh> {
+  if (!activeTokenRefresh) {
+    activeTokenRefresh = (async (): Promise<TokenRefresh> => {
+      try {
+        const { data, error } = await client.auth.refreshSession()
+        if (error) {
+          console.warn('[auth] Refresh token gagal:', error.message)
+          return { token: null, reason: error.message }
+        }
+        const token = data.session?.access_token ?? null
+        if (!token) return { token: null, reason: 'Sesi baru tidak ditemukan' }
+        console.log('[auth] Token diperbarui, sisa umur:', tokenSecondsLeft(token), 'detik')
+        return { token, reason: null }
+      } catch (err) {
+        const reason = err instanceof Error ? err.message : 'Refresh token gagal'
+        console.warn('[auth] Refresh token error:', reason)
+        return { token: null, reason }
+      }
+    })().finally(() => {
+      activeTokenRefresh = null
+    })
+  }
+  return activeTokenRefresh
+}
+
+function isUnauthenticated(message: string | null, status: number | null): boolean {
+  if (status === 401) return true
+  if (!message) return false
+  return message === 'Tidak terautentikasi'
+    || message === 'Invalid JWT'
+    || /\b(jwt|token)\b.*\b(invalid|expired|malformed|not authenticated)\b/i.test(message)
+}
+
+async function invokeAdminUsers(payload: Record<string, unknown>) {
+  if (!supabase) {
+    return {
+      data: null,
+      error: new Error('Koneksi Supabase belum tersedia.'),
+    }
+  }
+  const client = supabase
+
+  // Ambil token yang masih berlaku; refresh proaktif bila tinggal < 60 detik.
+  const readAccessToken = async (): Promise<TokenRefresh> => {
+    const { data: sessionData } = await client.auth.getSession()
+    const token = sessionData.session?.access_token ?? null
+    if (!token) return refreshAccessToken(client)
+
+    const left = tokenSecondsLeft(token)
+    if (left !== null && left < 60) {
+      console.log(`[auth] Token hampir kedaluwarsa (${left}s), refresh proaktif.`)
+      const refreshed = await refreshAccessToken(client)
+      // Jika refresh gagal, tetap coba dengan token lama; respons fungsi yang memastikan.
+      if (!refreshed.token) console.warn('[auth] Refresh proaktif gagal, memakai token lama:', refreshed.reason)
+      return refreshed.token ? refreshed : { token, reason: refreshed.reason }
+    }
+    return { token, reason: null }
+  }
+
+  const invokeWithToken = (accessToken: string) =>
+    client.functions.invoke('admin-users', {
+      body: payload,
+      headers: { Authorization: `Bearer ${accessToken}` },
+    })
+
+  const read = await readAccessToken()
+  if (!read.token) {
+    return { data: null, error: new Error(read.reason ? `${SESSION_HELP} (${read.reason})` : SESSION_HELP) }
+  }
+
+  let accessToken = read.token
+  let response = await invokeWithToken(accessToken)
+  const initialError = response.error ? await getFunctionErrorMessage(response.error) : null
+  const initialResultError = (response.data as { error?: string } | null)?.error ?? null
+
+  if (isUnauthenticated(initialError ?? initialResultError, getFunctionStatus(response.error))) {
+    console.warn('[auth] admin-users menolak token, refresh ulang lalu coba lagi.', {
+      initialError,
+      initialResultError,
+      tokenSisa: tokenSecondsLeft(accessToken),
+    })
+    const refreshed = await refreshAccessToken(client)
+    if (!refreshed.token) {
+      return { data: null, error: new Error(`${SESSION_HELP} (${refreshed.reason ?? 'token tidak valid'})`) }
+    }
+
+    accessToken = refreshed.token
+    response = await invokeWithToken(accessToken)
+    const retryError = response.error ? await getFunctionErrorMessage(response.error) : null
+    const retryResultError = (response.data as { error?: string } | null)?.error ?? null
+    if (isUnauthenticated(retryError ?? retryResultError, getFunctionStatus(response.error))) {
+      // Token sudah fresh tetapi tetap ditolak → kemungkinan konfigurasi/env fungsi.
+      console.error('[auth] Token baru tetap ditolak admin-users.', { retryError, retryResultError })
+      return { data: null, error: new Error(`${SESSION_HELP} (token baru tetap ditolak)`) }
+    }
+  }
+
+  return response
+}
+
 const initialKelurahan: Region[] = [{ id: 'kel-1', name: 'Padasuka', code: '3273011001' }]
 const initialRw: Region[] = [
   { id: 'rw-1', name: '01', kelurahanId: 'kel-1' },
@@ -511,8 +671,7 @@ function App() {
   const [waterTests, setWaterTests] = useState<WaterQualityTest[]>([])
   const [airTests, setAirTests] = useState<AirQualityTest[]>([])
   const [foodInspections, setFoodInspections] = useState<FoodInspectionResult[]>([])
-  const [entries] = useState<Entry[]>([])
-  const [users] = useState<UserProfile[]>([])
+  
   const reloadLocations = useCallback(async () => {
     if (!supabaseConfigured || !supabase) return
     try {
@@ -539,13 +698,80 @@ function App() {
       console.error('Unexpected error loading locations:', err)
     }
   }, [])
+
+  // Apply theme settings on app load
+  useEffect(() => {
+    const settings = loadSettings()
+    const theme = getThemeById(settings.theme)
+    document.documentElement.style.setProperty('--forest', theme.colors.primary)
+    document.documentElement.style.setProperty('--teal', theme.colors.primaryLight)
+    document.documentElement.style.setProperty('--mint', theme.colors.primaryBg)
+    document.documentElement.style.setProperty('--ink', theme.colors.text)
+    document.documentElement.style.setProperty('--muted', theme.colors.textSecondary)
+    document.documentElement.style.setProperty('--line', theme.colors.border)
+    document.documentElement.style.setProperty('--paper', theme.colors.surface)
+    document.documentElement.style.fontFamily = settings.fontFamily
+  }, [])
   const [pkmInfo, setPkmInfo] = useState<PKMInfo | null>(null)
   const [session, setSession] = useState<Session | null>(null)
   const [profile, setProfile] = useState<UserProfile | null>(null)
+  const [, setProfileLoaded] = useState(!supabaseConfigured)
   const [authReady, setAuthReady] = useState(!supabaseConfigured)
   const [showChangePassword, setShowChangePassword] = useState(false)
   const [changePasswordError, setChangePasswordError] = useState('')
   const [changePasswordSubmitting, setChangePasswordSubmitting] = useState(false)
+
+  const reloadWaterTests = useCallback(async () => {
+    if (!supabaseConfigured || !supabase || !profile) return
+    try {
+      console.log('Loading water quality tests for officer:', profile.id)
+      let waterQuery = supabase.from('water_quality_tests').select('*')
+      if (profile.role === 'kader') waterQuery = waterQuery.eq('officer_id', profile.id)
+      const { data, error } = await waterQuery.order('test_date', { ascending: false })
+      console.log('Load water quality tests result:', { data, error: error?.message, dataLength: data?.length })
+
+      if (error) {
+        console.error('Error loading water quality tests:', error)
+        return
+      }
+
+      if (data && data.length > 0) {
+        setWaterTests((data as WaterQualityTestRow[]).map(mapWaterQualityTestRow))
+        console.log('Water quality tests loaded successfully:', data.length)
+      } else {
+        setWaterTests([])
+        console.log('No water quality tests found')
+      }
+    } catch (err) {
+      console.error('Unexpected error loading water quality tests:', err)
+    }
+  }, [profile])
+
+  const reloadAirTests = useCallback(async () => {
+    if (!supabaseConfigured || !supabase || !profile) return
+    try {
+      console.log('Loading air quality tests for officer:', profile.id)
+      let airQuery = supabase.from('air_quality_tests').select('*')
+      if (profile.role === 'kader') airQuery = airQuery.eq('officer_id', profile.id)
+      const { data, error } = await airQuery.order('test_date', { ascending: false })
+      console.log('Load air quality tests result:', { data, error: error?.message, dataLength: data?.length })
+
+      if (error) {
+        console.error('Error loading air quality tests:', error)
+        return
+      }
+
+      if (data && data.length > 0) {
+        setAirTests((data as AirQualityTestRow[]).map(mapAirQualityTestRow))
+        console.log('Air quality tests loaded successfully:', data.length)
+      } else {
+        setAirTests([])
+        console.log('No air quality tests found')
+      }
+    } catch (err) {
+      console.error('Unexpected error loading air quality tests:', err)
+    }
+  }, [profile])
 
   async function handleChangePassword(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -596,7 +822,8 @@ function App() {
       
       // Update the is_temp_password flag in profiles
       const { error: profileError } = await supabase.from('profiles').update({
-        is_temp_password: false
+        is_temp_password: false,
+        last_password: newPassword
       }).eq('id', profile.id)
       
       if (profileError) {
@@ -631,7 +858,7 @@ function App() {
 
   useEffect(() => {
     async function loadProfile() {
-      if (!supabase || !session) { setProfile(null); return }
+      if (!supabase || !session) { setProfile(null); setProfileLoaded(true); return }
       // Retry profile loading with delay if initial load fails
       for (let i = 0; i < 3; i++) {
         const { data, error } = await supabase.from('profiles').select('*').eq('id', session.user.id).single()
@@ -639,6 +866,7 @@ function App() {
         if (!error && data) {
           const profileData = mapProfileRow(data as ProfileRow)
           setProfile(profileData)
+          setProfileLoaded(true)
           // Show change password modal if user has temp password
           if (profileData.isTempPassword) {
             setShowChangePassword(true)
@@ -658,7 +886,7 @@ function App() {
         email: session.user.email || null,
         role: 'kader',
         isActive: true,
-        moduleAccess: { entry: true, wilayah: true, pengguna: false, lokasi: true, uji_air: true, uji_udara: true }
+        moduleAccess: getDefaultModuleAccess('kader')
       })
     }
     void loadProfile()
@@ -772,12 +1000,20 @@ function App() {
   }, [])
 
   useEffect(() => {
-    if (regionsLoaded && !supabaseConfigured) localStorage.setItem('sigesit-regions', JSON.stringify({ kelurahan, rw, rt }))
+    if (regionsLoaded && !supabaseConfigured) {
+      localStorage.setItem('sigesit-regions', JSON.stringify({ kelurahan, rw, rt }))
+    }
   }, [kelurahan, rw, rt, regionsLoaded])
 
+  // Locations are protected by RLS (has_module_access(auth.uid(), 'lokasi')), so they can only be
+  // read once a session/profile exists. Loading them at mount (pre-auth) returned zero rows, which
+  // is why Uji Air/Udara showed "Lokasi tidak ditemukan" until a manual refresh.
+  const authUserId = session?.user.id ?? null
+  const profileId = profile?.id ?? null
   useEffect(() => {
+    if (!authUserId) return
     void reloadLocations()
-  }, [reloadLocations])
+  }, [reloadLocations, authUserId, profileId])
 
   useEffect(() => {
     async function loadPKMInfo() {
@@ -803,12 +1039,67 @@ function App() {
     void loadPKMInfo()
   }, [])
 
+  // Auto-load water tests when switching to uji_air view
+  useEffect(() => {
+    if (view === 'uji_air' && locations.length > 0) {
+      void reloadWaterTests()
+    }
+  }, [view, reloadWaterTests, locations.length])
+
+  // Auto-load air tests when switching to uji_udara view
+  useEffect(() => {
+    if (view === 'uji_udara' && locations.length > 0) {
+      void reloadAirTests()
+    }
+  }, [view, reloadAirTests, locations.length])
+
+  // Reload tests when locations are loaded (to fix location display issue)
+  useEffect(() => {
+    if (locations.length > 0) {
+      if (view === 'uji_air') {
+        void reloadWaterTests()
+      }
+      if (view === 'uji_udara') {
+        void reloadAirTests()
+      }
+    }
+  }, [locations.length, view, reloadWaterTests, reloadAirTests])
+
+  // Redirect away from views the current role is not allowed to open
+  useEffect(() => {
+    if (!profile) return
+    const guarded: Partial<Record<View, keyof ModuleAccess>> = {
+      entry: 'entry', wilayah: 'wilayah', pengguna: 'pengguna', lokasi: 'lokasi',
+      uji_air: 'uji_air', uji_udara: 'uji_udara', pangan: 'pangan', group_tpp: 'group_tpp',
+    }
+    const moduleKey = guarded[view]
+    if (moduleKey && !canAccessModule(profile, moduleKey)) setView('beranda')
+    if (view === 'laporan' && profile.role === 'kader') setView('beranda')
+    if (view === 'laporan_dbd' && profile.role === 'kader') setView('beranda')
+  }, [profile, view])
+
   if (supabaseConfigured && !authReady) return <main className="auth-shell"><p className="auth-loading">Memuat sesi…</p></main>
   if (supabaseConfigured && !session) return <LoginPage />
+  if (supabaseConfigured && !profile) return <main className="auth-shell"><p className="auth-loading">Memuat profil…</p></main>
 
   const displayName = profile?.fullName ?? 'Syifa Zahra'
   const initials = displayName.split(' ').map((part) => part[0]).slice(0, 2).join('').toUpperCase()
-  const canAccessPengguna = true
+  // When Supabase is not configured there is no profile; keep the UI fully browsable (demo mode).
+  const demoMode = !profile
+  const access = {
+    entry: demoMode || canAccessModule(profile, 'entry'),
+    wilayah: demoMode || canAccessModule(profile, 'wilayah'),
+    pengguna: demoMode || canAccessModule(profile, 'pengguna'),
+    lokasi: demoMode || canAccessModule(profile, 'lokasi'),
+    uji_air: demoMode || canAccessModule(profile, 'uji_air'),
+    uji_udara: demoMode || canAccessModule(profile, 'uji_udara'),
+    pangan: demoMode || canAccessModule(profile, 'pangan'),
+    group_tpp: demoMode || canAccessModule(profile, 'group_tpp'),
+    laporan: demoMode || profile?.role !== 'kader',
+    laporan_dbd: demoMode || profile?.role !== 'kader',
+  }
+  const showPemeriksaan = access.uji_air || access.uji_udara || access.pangan
+  const showDataMaster = access.wilayah || access.lokasi || access.group_tpp || access.pengguna
   const pkmName = pkmInfo?.namaPkm || 'SADAKELING PKM PADASUKA - KOTA CIMAHI'
   const pkmLogo = pkmInfo?.logoUrl
 
@@ -842,12 +1133,8 @@ function App() {
     )}
     <header className="topbar">
       <div className="brand">
-        {pkmLogo ? (
-          <img src={pkmLogo} alt="Logo PKM" style={{ width: '40px', height: '40px', borderRadius: '10px', objectFit: 'contain' }} />
-        ) : (
-          <div className="brand-mark">S</div>
-        )}
-        <div><strong>SIGESIT</strong><span>{pkmName}</span></div>
+        <img className="brand-logo" src="/Aset/logo-sigesit-mark.png" alt="Logo SIGESIT Sadakeling" />
+        <div><strong>SIGESIT SADAKELING</strong><span>{pkmName}</span></div>
       </div>
       <div className="topbar-actions"><button className={`connection ${online ? 'online' : 'offline'}`} onClick={() => setOnline(!online)} type="button"><i />{online ? 'Terhubung' : 'Offline'}</button><button className="avatar" type="button" aria-label={`Profil ${displayName}`}>{initials || 'SZ'}</button>{session && <button className="logout" onClick={() => { void supabase?.auth.signOut() }} type="button">Keluar</button>}</div>
     </header>
@@ -858,13 +1145,38 @@ function App() {
             <img src={pkmLogo} alt="Logo PKM" style={{ width: '60px', height: '60px', borderRadius: '12px', objectFit: 'contain' }} />
           </div>
         )}
-        <p className="side-label">MENU UTAMA</p><nav><button className={view === 'beranda' ? 'active' : ''} onClick={() => setView('beranda')} type="button"><span>⌂</span> Beranda</button><button className={view === 'entry' ? 'active' : ''} onClick={() => setView('entry')} type="button"><span>+</span> Entry Data</button></nav>
-        <p className="side-label">PEMERIKSAAN</p><nav><button className={view === 'uji_air' ? 'active' : ''} onClick={() => setView('uji_air')} type="button"><span>💧</span> Uji Air</button><button className={view === 'uji_udara' ? 'active' : ''} onClick={() => setView('uji_udara')} type="button"><span>🌬️</span> Uji Udara</button><button className={view === 'pangan' ? 'active' : ''} onClick={() => setView('pangan')} type="button"><span>🍱</span> Hasil Pangan/Makanan</button></nav>
-        <p className="side-label">DATA MASTER</p><nav><button className={view === 'wilayah' ? 'active' : ''} onClick={() => setView('wilayah')} type="button"><span>⌘</span> Wilayah</button><button className={view === 'lokasi' ? 'active' : ''} onClick={() => setView('lokasi')} type="button"><span>📍</span> Lokasi</button>{canAccessPengguna && <button className={view === 'pengguna' ? 'active' : ''} onClick={() => setView('pengguna')} type="button"><span>♙</span> Pengguna</button>}</nav>
-        <p className="side-label">AKUN</p><nav><button className={view === 'profile' ? 'active' : ''} onClick={() => setView('profile')} type="button"><span>👤</span> Profil PKM</button></nav>
-        <div className="sidebar-footer"><span className="sync-dot" /><div><strong>1 data belum sinkron</strong><small>Data akan terkirim saat online</small></div></div>
+        <p className="side-label">MENU UTAMA</p>
+        <nav>
+          <button className={view === 'beranda' ? 'active' : ''} onClick={() => setView('beranda')} type="button"><span>⌂</span> Beranda</button>
+          {access.entry && <button className={view === 'entry' ? 'active' : ''} onClick={() => setView('entry')} type="button"><span>+</span> Entry Data</button>}
+        </nav>
+        {showPemeriksaan && <>
+          <p className="side-label">PEMERIKSAAN</p>
+          <nav>
+            {access.uji_air && <button className={view === 'uji_air' ? 'active' : ''} onClick={() => { setView('uji_air'); void reloadWaterTests(); }} type="button"><span>💧</span> Uji Air</button>}
+            {access.uji_udara && <button className={view === 'uji_udara' ? 'active' : ''} onClick={() => { setView('uji_udara'); void reloadAirTests(); }} type="button"><span>🌬️</span> Uji Udara</button>}
+            {access.pangan && <button className={view === 'pangan' ? 'active' : ''} onClick={() => setView('pangan')} type="button"><span>🍱</span> Hasil Pangan/Makanan</button>}
+          </nav>
+        </>}
+        {showDataMaster && <>
+          <p className="side-label">DATA MASTER</p>
+          <nav>
+            {access.wilayah && <button className={view === 'wilayah' ? 'active' : ''} onClick={() => setView('wilayah')} type="button"><span>⌘</span> Wilayah</button>}
+            {access.lokasi && <button className={view === 'lokasi' ? 'active' : ''} onClick={() => setView('lokasi')} type="button"><span>📍</span> Lokasi</button>}
+            {access.group_tpp && <button className={view === 'group_tpp' ? 'active' : ''} onClick={() => setView('group_tpp')} type="button"><span>📋</span> Group/Jenis TPP</button>}
+            {access.pengguna && <button className={view === 'pengguna' ? 'active' : ''} onClick={() => setView('pengguna')} type="button"><span>♙</span> Pengguna</button>}
+          </nav>
+        </>}
+        {access.laporan && <>
+          <p className="side-label">LAPORAN</p>
+          <nav>
+            <button className={view === 'laporan' ? 'active' : ''} onClick={() => setView('laporan')} type="button"><span>📊</span> Laporan Jentik</button>
+            {access.laporan_dbd && <button className={view === 'laporan_dbd' ? 'active' : ''} onClick={() => setView('laporan_dbd')} type="button"><span>🦟</span> Laporan DBD</button>}
+          </nav>
+        </>}
+        {/* Modul Profil disembunyikan dari navigasi */}
       </aside>
-      <section className="content">{view === 'entry' ? <EntryPage profile={profile} kelurahan={kelurahan} rw={rw} rt={rt} /> : view === 'wilayah' ? <WilayahPage kelurahan={kelurahan} rw={rw} rt={rt} setKelurahan={setKelurahan} setRw={setRw} setRt={setRt} /> : view === 'pengguna' && canAccessPengguna ? <PenggunaPage kelurahan={kelurahan} rw={rw} rt={rt} currentUserId={session?.user.id} /> : view === 'profile' ? <ProfilePage /> : view === 'lokasi' ? <LokasiPage kelurahan={kelurahan} rw={rw} rt={rt} locations={locations} reloadLocations={reloadLocations} /> : view === 'uji_air' ? <UjiAirPage profile={profile} locations={locations} kelurahan={kelurahan} waterTests={waterTests} setWaterTests={setWaterTests} /> : view === 'uji_udara' ? <UjiUdaraPage profile={profile} locations={locations} kelurahan={kelurahan} airTests={airTests} setAirTests={setAirTests} /> : view === 'pangan' ? <PanganPage profile={profile} kelurahan={kelurahan} rw={rw} rt={rt} foodInspections={foodInspections} setFoodInspections={setFoodInspections} /> : <Dashboard view={view} setView={setView} pkmInfo={pkmInfo} kelurahan={kelurahan} rw={rw} rt={rt} locations={locations} waterTests={waterTests} airTests={airTests} entries={entries} users={users} foodInspections={foodInspections} />}</section>
+      <section className="content">{view === 'entry' && access.entry ? <EntryPage profile={profile} kelurahan={kelurahan} rw={rw} rt={rt} /> : view === 'wilayah' && access.wilayah ? <WilayahPage kelurahan={kelurahan} rw={rw} rt={rt} setKelurahan={setKelurahan} setRw={setRw} setRt={setRt} /> : view === 'pengguna' && access.pengguna ? <PenggunaPage kelurahan={kelurahan} rw={rw} rt={rt} currentUserId={session?.user.id} /> : view === 'profile' ? <ProfilePage /> : view === 'lokasi' && access.lokasi ? <LokasiPage kelurahan={kelurahan} rw={rw} rt={rt} locations={locations} reloadLocations={reloadLocations} /> : view === 'uji_air' && access.uji_air ? <UjiAirPage profile={profile} locations={locations} kelurahan={kelurahan} waterTests={waterTests} setWaterTests={setWaterTests} /> : view === 'uji_udara' && access.uji_udara ? <UjiUdaraPage profile={profile} locations={locations} kelurahan={kelurahan} airTests={airTests} setAirTests={setAirTests} /> : view === 'pangan' && access.pangan ? <PanganPage profile={profile} kelurahan={kelurahan} rw={rw} rt={rt} foodInspections={foodInspections} setFoodInspections={setFoodInspections} /> : view === 'group_tpp' && access.group_tpp ? <GroupTppPage /> : view === 'laporan' && access.laporan ? <LaporanPage /> : view === 'laporan_dbd' && access.laporan_dbd ? <LaporanDbdPage /> : view === 'settings' ? <SettingsPage /> : <Dashboard view={view} setView={setView} access={access} profile={profile} pkmInfo={pkmInfo} kelurahan={kelurahan} locations={locations} />}</section>
     </section>
   </main>
 }
@@ -1200,7 +1512,7 @@ function WilayahPage({ kelurahan, rw, rt, setKelurahan, setRw, setRt }: { kelura
           </div>
         ) : (
           <div className="data-table-container">
-            <table className="data-table">
+          <table className="data-table pangan-table">
               <thead>
                 <tr>
                   <th>Nama Wilayah</th>
@@ -1230,166 +1542,872 @@ function WilayahPage({ kelurahan, rw, rt, setKelurahan, setRw, setRt }: { kelura
   )
 }
 
-function Dashboard({ view, setView, pkmInfo, kelurahan, rw, rt, locations, waterTests, airTests, entries, users, foodInspections }: { 
-  view: View; 
-  setView: (view: View) => void; 
-  pkmInfo: PKMInfo | null;
-  kelurahan: Region[];
-  rw: Region[];
-  rt: Region[];
-  locations: Location[];
-  waterTests: WaterQualityTest[];
-  airTests: AirQualityTest[];
-  entries: Entry[];
-  users: UserProfile[];
-  foodInspections: FoodInspectionResult[];
-}) {
-  const title = 'Selamat pagi, Syifa.'
-  const pkmName = pkmInfo?.namaPkm || 'PKM Padasuka'
-  
-  // Hitung total data dari setiap modul
-  const totalWilayah = kelurahan.length + rw.length + rt.length
-  const totalKelurahan = kelurahan.length
-  const totalRw = rw.length
-  const totalRt = rt.length
-  const totalLokasi = locations.length
-  const totalUjiAir = waterTests.length
-  const totalUjiUdara = airTests.length
-  const totalPangan = foodInspections.length
-  const totalEntries = entries.length
-  const totalPengguna = users.length
-  
-  // Hitung data terbaru (7 hari terakhir)
-  const last7Days = new Date()
-  last7Days.setDate(last7Days.getDate() - 7)
-  const newEntriesLast7Days = entries.filter(e => new Date(e.entryDate) >= last7Days).length
-  const newWaterTestsLast7Days = waterTests.filter(e => new Date(e.testDate) >= last7Days).length
-  const newAirTestsLast7Days = airTests.filter(e => new Date(e.testDate) >= last7Days).length
-  const newFoodInspeksiLast7Days = foodInspections.filter(e => new Date(e.entryDate) >= last7Days).length
-  
-  // Waktu terakhir update
-  const getDate = (item: any) => {
-    if (item.testDate) return new Date(item.testDate).getTime()
-    if (item.entryDate) return new Date(item.entryDate).getTime()
-    if (item.createdAt) return new Date(item.createdAt).getTime()
-    return 0
+// ===================== BERANDA / DASHBOARD INFORMASI (REAL-TIME) =====================
+const DASH_REFRESH_MS = 60000
+
+type DashboardAccess = Record<keyof ModuleAccess, boolean> & { laporan: boolean; laporan_dbd: boolean }
+
+type DashEntryLite = { id: string; entryNumber: number; entryDate: string; kelurahanId: string; rwId: string }
+
+type DashCardLite = { entryId: string; totalJiwa: number; jiwaMenetap: number; jamban: number }
+
+type DashSummary = {
+  entries: DashEntryLite[]
+  cards: DashCardLite[]
+  kk: number
+  jiwa: number
+  jiwaMenetap: number
+  jamban: number
+  water: WaterQualityTest[]
+  air: AirQualityTest[]
+  food: FoodInspectionResult[]
+  users: number
+  abj: AbjReport[]
+  dbd: DbdReport[]
+}
+
+type DashActivity = { key: string; icon: string; module: string; title: string; sub: string; dateMs: number; view: View }
+
+type DashBadge = { cls: 'ok' | 'warn' | 'bad' | 'neutral'; label: string }
+
+type DashMonth = { start: number; end: number; label: string }
+
+function dashEmptySummary(): DashSummary {
+  return { entries: [], cards: [], kk: 0, jiwa: 0, jiwaMenetap: 0, jamban: 0, water: [], air: [], food: [], users: 0, abj: [], dbd: [] }
+}
+
+function dashNum(value: unknown): number | null {
+  if (value === null || value === undefined || value === '') return null
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+function dashMean(values: number[]): number | null {
+  if (values.length === 0) return null
+  return values.reduce((sum, item) => sum + item, 0) / values.length
+}
+
+function dashDateMs(value?: string | null): number {
+  if (!value) return 0
+  const parsed = new Date(value).getTime()
+  return Number.isNaN(parsed) ? 0 : parsed
+}
+
+// Batas awal & akhir tahun berjalan (1 Januari s.d 31 Desember tahun yang sama)
+function dashStartYear(ms: number): number {
+  const date = new Date(ms)
+  return new Date(date.getFullYear(), 0, 1).getTime()
+}
+
+function dashEndYear(ms: number): number {
+  const date = new Date(ms)
+  return new Date(date.getFullYear() + 1, 0, 1).getTime()
+}
+
+function dashIsPositive(value: unknown): boolean {
+  const text = String(value ?? '').trim().toLowerCase()
+  return text === 'positif' || text === 'positive' || text === '1' || text === '+'
+}
+
+function dashInMonth(ms: number, month: DashMonth): boolean {
+  return ms > 0 && ms >= month.start && ms < month.end
+}
+
+// Daftar bulan dari Januari tahun berjalan s.d bulan berjalan
+function dashYearMonths(baseMs: number): DashMonth[] {
+  const now = new Date(baseMs)
+  const months: DashMonth[] = []
+  for (let month = 0; month <= now.getMonth(); month++) {
+    const start = new Date(now.getFullYear(), month, 1)
+    const end = new Date(now.getFullYear(), month + 1, 1)
+    months.push({
+      start: start.getTime(),
+      end: end.getTime(),
+      label: start.toLocaleDateString('id-ID', { month: 'short' }),
+    })
   }
-  const allItems = [...waterTests, ...airTests, ...entries, ...foodInspections]
-  const lastUpdate = allItems.sort((a, b) => getDate(b) - getDate(a))[0]
-  const lastUpdateTime = lastUpdate 
-    ? new Date(getDate(lastUpdate)).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })
-    : '-'
+  return months
+}
+
+function dashFormatTime(date: Date): string {
+  return date.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })
+}
+
+function dashFormatDate(ms: number): string {
+  if (!ms) return '-'
+  return new Date(ms).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' })
+}
+
+function Dashboard({ view, setView, access, profile, pkmInfo, kelurahan, locations }: {
+  view: View
+  setView: (view: View) => void
+  access: DashboardAccess
+  profile: UserProfile | null
+  pkmInfo: PKMInfo | null
+  kelurahan: Region[]
+  locations: Location[]
+}) {
+  const profileId = profile?.id ?? null
+  const profileRole = profile?.role ?? null
+  const [summary, setSummary] = useState<DashSummary | null>(null)
+  const [refreshing, setRefreshing] = useState(false)
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
+  const [loadErrors, setLoadErrors] = useState<string[]>([])
+  // Waktu dihitung saat pengambilan data (bukan saat render) agar render tetap murni
+  const [nowMs, setNowMs] = useState(0)
+  const [greeting, setGreeting] = useState('Selamat pagi')
+
+  // Ambil ringkasan semua modul secara paralel (Supabase + Google Sheet)
+  const loadSummary = useCallback(async () => {
+    setRefreshing(true)
+    const failed: string[] = []
+    const next = dashEmptySummary()
+    const isKader = profileRole === 'kader'
+    const jobs: Promise<void>[] = []
+    const client = supabase
+
+    if (supabaseConfigured && client) {
+      const db = client
+
+      // 1) Entry data (jumlah rumah, KK, jiwa, jamban)
+      jobs.push((async () => {
+        try {
+          let query = db.from('entries').select('id, entry_number, entry_date, kelurahan_id, rw_id')
+          if (isKader && profileId) query = query.eq('officer_id', profileId)
+          const { data, error } = await query.order('entry_date', { ascending: false })
+          if (error) throw error
+          next.entries = (data ?? []).map((row: any) => ({
+            id: String(row.id),
+            entryNumber: Number(row.entry_number) || 0,
+            entryDate: row.entry_date ?? '',
+            kelurahanId: row.kelurahan_id ?? '',
+            rwId: row.rw_id ?? '',
+          }))
+          if (next.entries.length > 0) {
+            const { data: cards, error: cardsError } = await db
+              .from('family_cards')
+              .select('entry_id, total_jiwa, jiwa_menetap, jamban_count')
+              .in('entry_id', next.entries.map((entry) => entry.id))
+            if (cardsError) throw cardsError
+            next.cards = (cards ?? []).map((row: any) => ({
+              entryId: String(row.entry_id ?? ''),
+              totalJiwa: Number(row.total_jiwa) || 0,
+              jiwaMenetap: Number(row.jiwa_menetap) || 0,
+              jamban: Number(row.jamban_count) || 0,
+            }))
+          }
+        } catch {
+          failed.push('Entry Data')
+        }
+      })())
+
+      // 2) Uji kualitas air
+      jobs.push((async () => {
+        try {
+          let query = db.from('water_quality_tests').select('*')
+          if (isKader && profileId) query = query.eq('officer_id', profileId)
+          const { data, error } = await query.order('test_date', { ascending: false })
+          if (error) throw error
+          next.water = (data ?? []).map((row: any) => mapWaterQualityTestRow(row))
+        } catch {
+          failed.push('Uji Air')
+        }
+      })())
+
+      // 3) Uji kualitas udara
+      jobs.push((async () => {
+        try {
+          let query = db.from('air_quality_tests').select('*')
+          if (isKader && profileId) query = query.eq('officer_id', profileId)
+          const { data, error } = await query.order('test_date', { ascending: false })
+          if (error) throw error
+          next.air = (data ?? []).map((row: any) => mapAirQualityTestRow(row))
+        } catch {
+          failed.push('Uji Udara')
+        }
+      })())
+
+      // 4) Hasil pemeriksaan pangan
+      jobs.push((async () => {
+        try {
+          let query = db.from('food_inspection_results').select('*')
+          if (isKader && profileId) query = query.eq('officer_id', profileId)
+          const { data, error } = await query.order('entry_date', { ascending: false })
+          if (error) throw error
+          next.food = (data ?? []).map((row: any) => mapFoodInspectionRow(row))
+        } catch {
+          failed.push('Hasil Pangan')
+        }
+      })())
+
+      // 5) Jumlah pengguna (kader & relawan)
+      if (!isKader) {
+        jobs.push((async () => {
+          try {
+            const { count, error } = await db.from('profiles').select('id', { count: 'exact', head: true })
+            if (error) throw error
+            next.users = count ?? 0
+          } catch {
+            failed.push('Pengguna')
+          }
+        })())
+      }
+    }
+
+    // 6) Laporan jentik (ABJ) & 7) Laporan DBD dari Google Sheet
+    if (!isKader) {
+      jobs.push((async () => {
+        try {
+          const response = await fetch(ABJ_SHEET_CSV_URL)
+          if (!response.ok) throw new Error(`HTTP ${response.status}`)
+          next.abj = parseAbjRows(parseCsv(await response.text()))
+        } catch {
+          failed.push('Laporan Jentik')
+        }
+      })())
+      jobs.push((async () => {
+        try {
+          const response = await fetch(DBD_SHEET_CSV_URL)
+          if (!response.ok) throw new Error(`HTTP ${response.status}`)
+          next.dbd = parseDbdRows(parseCsv(await response.text()))
+        } catch {
+          failed.push('Laporan DBD')
+        }
+      })())
+    }
+
+    await Promise.all(jobs)
+    const loadedAt = Date.now()
+    const loadedHour = new Date(loadedAt).getHours()
+    setSummary(next)
+    setLastUpdated(new Date(loadedAt))
+    setNowMs(loadedAt)
+    setGreeting(loadedHour < 10 ? 'Selamat pagi' : loadedHour < 15 ? 'Selamat siang' : loadedHour < 18 ? 'Selamat sore' : 'Selamat malam')
+    setLoadErrors(failed)
+    setRefreshing(false)
+  }, [profileId, profileRole])
+
+  // Muat saat pertama tampil, refresh tiap 60 detik dan saat jendela kembali fokus
+  useEffect(() => {
+    void loadSummary()
+    const timer = window.setInterval(() => { void loadSummary() }, DASH_REFRESH_MS)
+    const handleFocus = () => { void loadSummary() }
+    window.addEventListener('focus', handleFocus)
+    return () => {
+      window.clearInterval(timer)
+      window.removeEventListener('focus', handleFocus)
+    }
+  }, [loadSummary])
+
+  // ===================== Perhitungan ringkasan & analisa =====================
+  // Rentang waktu beranda: tahun berjalan (1 Januari s.d hari ini)
+  const raw = summary ?? dashEmptySummary()
+  const yearStart = dashStartYear(nowMs)
+  const yearEnd = dashEndYear(nowMs)
+  const inYear = (ms: number) => ms > 0 && ms >= yearStart && ms < yearEnd
+  const data: DashSummary = {
+    entries: raw.entries.filter((item) => inYear(dashDateMs(item.entryDate))),
+    water: raw.water.filter((item) => inYear(dashDateMs(item.testDate))),
+    air: raw.air.filter((item) => inYear(dashDateMs(item.testDate))),
+    food: raw.food.filter((item) => inYear(dashDateMs(item.entryDate))),
+    abj: raw.abj.filter((item) => inYear(item.dateMs)),
+    dbd: raw.dbd.filter((item) => inYear(item.dateMs)),
+    cards: raw.cards,
+    kk: 0,
+    jiwa: 0,
+    jiwaMenetap: 0,
+    jamban: 0,
+    users: raw.users,
+  }
+  const yearEntryIds = new Set(data.entries.map((item) => item.id))
+  for (const card of raw.cards) {
+    if (!yearEntryIds.has(card.entryId)) continue
+    data.kk += 1
+    data.jiwa += card.totalJiwa
+    data.jiwaMenetap += card.jiwaMenetap
+    data.jamban += card.jamban
+  }
+
+  // Label rentang waktu tahun berjalan, contoh: "Jan–Sep 2026" dan "01 Jan 2026 – 23 Sep 2026"
+  const yearLabel = `${new Date(yearStart).toLocaleDateString('id-ID', { month: 'short' })}–${new Date(nowMs).toLocaleDateString('id-ID', { month: 'short', year: 'numeric' })}`
+  const periodLabel = `${dashFormatDate(yearStart)} – ${dashFormatDate(nowMs)}`
+
+  const entryTotal = data.entries.length
+  const waterTotal = data.water.length
+  const airTotal = data.air.length
+  const foodTotal = data.food.length
+  const abjTotal = data.abj.length
+  const dbdTotal = data.dbd.length
+
+  // --- Analisa kualitas air: pH 6,5-8,5, kekeruhan <=5 NTU, TDS <=1000, bebas E.coli ---
+  const phList: number[] = []
+  let waterChecked = 0
+  let waterOk = 0
+  for (const item of data.water) {
+    const checks: boolean[] = []
+    const ph = dashNum(item.phValue)
+    if (ph !== null) {
+      phList.push(ph)
+      checks.push(ph >= 6.5 && ph <= 8.5)
+    }
+    const turbidity = dashNum(item.turbidityValue)
+    if (turbidity !== null) checks.push(turbidity <= 5)
+    const tds = dashNum(item.tdsValue)
+    if (tds !== null) checks.push(tds <= 1000)
+    if (item.eColiValue !== undefined && item.eColiValue !== null && String(item.eColiValue) !== '') {
+      checks.push(!dashIsPositive(item.eColiValue))
+    }
+    if (checks.length > 0) {
+      waterChecked += 1
+      if (checks.every(Boolean)) waterOk += 1
+    }
+  }
+  const avgPh = dashMean(phList)
+  const waterPct = waterChecked > 0 ? Math.round((waterOk / waterChecked) * 100) : null
+  const waterBadge: DashBadge = waterPct === null
+    ? { cls: 'neutral', label: 'BELUM ADA DATA' }
+    : waterPct >= 90
+      ? { cls: 'ok', label: 'LAYAK' }
+      : waterPct >= 70
+        ? { cls: 'warn', label: 'PERLU EVALUASI' }
+        : { cls: 'bad', label: 'TIDAK LAYAK' }
+
+  // --- Analisa kualitas udara: PM2.5, PM10, kebisingan dibanding ambang acuan ---
+  const pm25List: number[] = []
+  const pm10List: number[] = []
+  const noiseList: number[] = []
+  for (const item of data.air) {
+    for (const value of [item.pm25_1, item.pm25_2, item.pm25_3]) {
+      const parsed = dashNum(value)
+      if (parsed !== null) pm25List.push(parsed)
+    }
+    for (const value of [item.pm10_1, item.pm10_2, item.pm10_3]) {
+      const parsed = dashNum(value)
+      if (parsed !== null) pm10List.push(parsed)
+    }
+    for (const value of [item.noise1, item.noise2, item.noise3]) {
+      const parsed = dashNum(value)
+      if (parsed !== null) noiseList.push(parsed)
+    }
+  }
+  const avgPm25 = dashMean(pm25List)
+  const avgPm10 = dashMean(pm10List)
+  const avgNoise = dashMean(noiseList)
+  const airSampleCount = pm25List.length + pm10List.length + noiseList.length
+  const airOver = pm25List.filter((value) => value > 55).length
+    + pm10List.filter((value) => value > 80).length
+    + noiseList.filter((value) => value > 55).length
+  const airWithin = (avgPm25 === null || avgPm25 <= 55)
+    && (avgPm10 === null || avgPm10 <= 80)
+    && (avgNoise === null || avgNoise <= 55)
+  const airBadge: DashBadge = airSampleCount === 0
+    ? { cls: 'neutral', label: 'BELUM ADA DATA' }
+    : airWithin
+      ? { cls: 'ok', label: 'BAIK' }
+      : { cls: 'warn', label: 'PERLU PERHATIAN' }
+
+  // --- Analisa pangan: sampel terindikasi bahan berbahaya ---
+  const foodParams = ['boraks', 'formalin', 'rodaminB', 'metanilYellow', 'eColi'] as const
+  const foodParamLabels: Record<(typeof foodParams)[number], string> = {
+    boraks: 'Boraks',
+    formalin: 'Formalin',
+    rodaminB: 'Rhodamin B',
+    metanilYellow: 'Metanil Yellow',
+    eColi: 'E-coli',
+  }
+  const foodPositive: Record<(typeof foodParams)[number], number> = { boraks: 0, formalin: 0, rodaminB: 0, metanilYellow: 0, eColi: 0 }
+  let foodSamples = 0
+  let foodSamplesPositive = 0
+  for (const inspection of data.food) {
+    for (const sample of inspection.samples) {
+      foodSamples += 1
+      let hasPositive = false
+      for (const param of foodParams) {
+        if (dashIsPositive(sample[param])) {
+          foodPositive[param] += 1
+          hasPositive = true
+        }
+      }
+      if (hasPositive) foodSamplesPositive += 1
+    }
+  }
+  const foodLulus = data.food.filter((item) => item.overallStatus === 'Lulus').length
+  const foodSafePct = foodSamples > 0 ? Math.round(((foodSamples - foodSamplesPositive) / foodSamples) * 100) : null
+  const foodFindings = foodParams
+    .filter((param) => foodPositive[param] > 0)
+    .map((param) => `${foodParamLabels[param]} ${foodPositive[param]}`)
+    .join(' · ')
+  const foodBadge: DashBadge = foodSamples === 0
+    ? { cls: 'neutral', label: 'BELUM ADA DATA' }
+    : foodSamplesPositive === 0
+      ? { cls: 'ok', label: 'SEMUA AMAN' }
+      : { cls: 'bad', label: 'ADA TEMUAN' }
+
+  // --- Analisa jentik: ABJ (target nasional minimal 80%) ---
+  const abjDiperiksa = data.abj.reduce((sum, item) => sum + item.diperiksa, 0)
+  const abjPositif = data.abj.reduce((sum, item) => sum + item.positif, 0)
+  const abjNegatif = data.abj.reduce((sum, item) => sum + item.negatif, 0)
+  const abjPct = abjDiperiksa > 0 ? (abjNegatif / abjDiperiksa) * 100 : null
+  const abjBadge: DashBadge = abjPct === null
+    ? { cls: 'neutral', label: 'BELUM ADA DATA' }
+    : abjPct >= 80
+      ? { cls: 'ok', label: 'TARGET TERCAPAI' }
+      : abjPct >= 60
+        ? { cls: 'warn', label: 'PERLU PERHATIAN' }
+        : { cls: 'bad', label: 'KRITIS' }
+
+  // --- Analisa DBD: kasus, kesembuhan, CFR ---
+  const dbdSembuh = data.dbd.filter((item) => item.kondisi.toLowerCase().includes('sembuh')).length
+  const dbdMeninggal = data.dbd.filter((item) => item.kondisi.toLowerCase().includes('meninggal')).length
+  const dbdCfr = dbdTotal > 0 ? (dbdMeninggal / dbdTotal) * 100 : null
+  const dbdBadge: DashBadge = dbdTotal === 0
+    ? { cls: 'neutral', label: 'BELUM ADA KASUS' }
+    : { cls: 'warn', label: `${dbdTotal} KASUS TAHUN INI` }
+
+  // --- Tren tahun berjalan (Januari s.d bulan berjalan) ---
+  const months = dashYearMonths(nowMs)
+  const activityByMonth = months.map((month) =>
+    data.entries.filter((item) => dashInMonth(dashDateMs(item.entryDate), month)).length
+    + data.water.filter((item) => dashInMonth(dashDateMs(item.testDate), month)).length
+    + data.air.filter((item) => dashInMonth(dashDateMs(item.testDate), month)).length
+    + data.food.filter((item) => dashInMonth(dashDateMs(item.entryDate), month)).length,
+  )
+  const jentikByMonth = months.map((month) =>
+    data.abj.filter((item) => dashInMonth(item.dateMs, month)).reduce((sum, item) => sum + item.positif, 0),
+  )
+  const dbdByMonth = months.map((month) => data.dbd.filter((item) => dashInMonth(item.dateMs, month)).length)
+  const maxActivity = Math.max(1, ...activityByMonth)
+  const maxCases = Math.max(1, ...jentikByMonth, ...dbdByMonth)
+
+  // --- Helper nama wilayah & lokasi ---
+  const kelNameById = (id?: string) => (id ? kelurahan.find((region) => region.id === id)?.name : undefined)
+  const locationName = (id?: string) => locations.find((location) => location.id === id)?.name
+  const locationKelName = (id?: string) => {
+    const location = locations.find((item) => item.id === id)
+    return location?.kelurahanId ? kelNameById(location.kelurahanId) : undefined
+  }
+
+  // --- Sebaran aktivitas per kelurahan (top 5) ---
+  const kelCount = new Map<string, number>()
+  const countKel = (name?: string) => {
+    const key = String(name ?? '').trim().toUpperCase()
+    if (!key) return
+    kelCount.set(key, (kelCount.get(key) ?? 0) + 1)
+  }
+  data.entries.forEach((item) => countKel(kelNameById(item.kelurahanId)))
+  data.food.forEach((item) => countKel(kelNameById(item.kelurahanId)))
+  data.water.forEach((item) => countKel(locationKelName(item.locationId)))
+  data.air.forEach((item) => countKel(locationKelName(item.locationId)))
+  if (access.laporan) data.abj.forEach((item) => countKel(item.kelurahan))
+  if (access.laporan_dbd) data.dbd.forEach((item) => countKel(item.kelurahan))
+  const topKel = Array.from(kelCount, ([name, count]) => ({ name, count }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 5)
+  const maxKel = topKel.length > 0 ? topKel[0].count : 1
+  // Label sebaran mengikuti jumlah kelurahan yang benar-benar punya data (maks. 5 ditampilkan)
+  const distSubtitle = kelCount.size === 0
+    ? 'Belum ada aktivitas per kelurahan.'
+    : kelCount.size > topKel.length
+      ? `${topKel.length} dari ${kelCount.size} kelurahan dengan aktivitas pendataan & pelaporan terbanyak`
+      : `${kelCount.size} kelurahan dengan aktivitas pendataan & pelaporan terbanyak`
+
+  // --- Aktivitas terbaru lintas modul ---
+  const feed: DashActivity[] = []
+  if (access.entry) {
+    data.entries.forEach((item) => feed.push({
+      key: `entry-${item.id}`,
+      icon: '⌂',
+      module: 'Entry Data',
+      title: `Entry #${item.entryNumber}`,
+      sub: kelNameById(item.kelurahanId) ?? 'Wilayah belum ditentukan',
+      dateMs: dashDateMs(item.entryDate),
+      view: 'entry',
+    }))
+  }
+  if (access.uji_air) {
+    data.water.forEach((item) => feed.push({
+      key: `water-${item.id}`,
+      icon: '💧',
+      module: 'Uji Air',
+      title: locationName(item.locationId) ?? 'Lokasi uji air',
+      sub: `Kualitas air · ${locationKelName(item.locationId) ?? '-'}`,
+      dateMs: dashDateMs(item.testDate),
+      view: 'uji_air',
+    }))
+  }
+  if (access.uji_udara) {
+    data.air.forEach((item) => feed.push({
+      key: `air-${item.id}`,
+      icon: '🌬️',
+      module: 'Uji Udara',
+      title: locationName(item.locationId) ?? 'Lokasi uji udara',
+      sub: `Kualitas udara · ${locationKelName(item.locationId) ?? '-'}`,
+      dateMs: dashDateMs(item.testDate),
+      view: 'uji_udara',
+    }))
+  }
+  if (access.pangan) {
+    data.food.forEach((item) => feed.push({
+      key: `food-${item.id}`,
+      icon: '🍱',
+      module: 'Pemeriksaan Pangan',
+      title: item.address || `Pemeriksaan #${item.entryNumber}`,
+      sub: `${item.samples.length} sampel · ${kelNameById(item.kelurahanId) ?? '-'}`,
+      dateMs: dashDateMs(item.entryDate),
+      view: 'pangan',
+    }))
+  }
+  if (access.laporan) {
+    data.abj.forEach((item) => feed.push({
+      key: `abj-${item.tanggal}-${item.kelurahan}-${item.rw}`,
+      icon: '🦟',
+      module: 'Laporan Jentik',
+      title: `${item.diperiksa} rumah diperiksa`,
+      sub: `Positif jentik ${item.positif} · ${item.kelurahan}`,
+      dateMs: item.dateMs,
+      view: 'laporan',
+    }))
+  }
+  if (access.laporan_dbd) {
+    data.dbd.forEach((item) => feed.push({
+      key: `dbd-${item.tanggalSakit}-${item.nama}`,
+      icon: '🩺',
+      module: 'Laporan DBD',
+      title: `Kasus DBD · ${item.nama}`,
+      sub: `${item.kondisi || 'Pelaporan'} · ${item.kelurahan}`,
+      dateMs: item.dateMs,
+      view: 'laporan_dbd',
+    }))
+  }
+  feed.sort((a, b) => b.dateMs - a.dateMs)
+  const feedTop = feed.slice(0, 8)
+
+  // --- Sapaan & info umum ---
+  const pkmName = pkmInfo?.namaPkm || 'PKM Padasuka'
+  const firstName = (profile?.fullName || 'Syifa').split(' ')[0]
 
   if (view !== 'beranda') return <section className="master-page"><div className="page-heading"><div><p className="eyebrow">DATA MASTER</p><h1>{view === 'wilayah' ? 'Data Wilayah' : view === 'pengguna' ? 'Pengguna Kader & Relawan' : view === 'lokasi' ? 'Data Lokasi' : view === 'uji_air' ? 'Uji Kualitas Air' : view === 'uji_udara' ? 'Uji Kualitas Udara' : view === 'pangan' ? 'Hasil Pemeriksaan Pangan/Makanan' : 'Entry Data'}</h1><p>Kelola data yang digunakan oleh seluruh petugas lapangan.</p></div></div></section>
-  return <><div className="page-heading dashboard-heading"><div><p className="eyebrow">DASHBOARD LAPANGAN</p><h1>{title}</h1><p>Berikut ringkasan pendataan wilayah kerja {pkmName} hari ini.</p></div><button className="primary" onClick={() => setView('entry')} type="button">+ Input data rumah</button></div>
-  
-  {/* Grid Statistik Utama */}
-  <div className="stat-grid">
-    <article className="stat-card clickable" onClick={() => setView('wilayah')}>
-      <span className="stat-icon blue">⌘</span>
-      <div>
-        <p>Total Wilayah</p>
-        <strong>{totalWilayah}</strong>
-        <small>{totalKelurahan} Kel, {totalRw} RW, {totalRt} RT</small>
-      </div>
-    </article>
-    <article className="stat-card clickable" onClick={() => setView('lokasi')}>
-      <span className="stat-icon teal">📍</span>
-      <div>
-        <p>Lokasi Terdaftar</p>
-        <strong>{totalLokasi}</strong>
-        <small>Semua titik lokasi aktif</small>
-      </div>
-    </article>
-    <article className="stat-card clickable" onClick={() => setView('uji_air')}>
-      <span className="stat-icon cyan">💧</span>
-      <div>
-        <p>Uji Kualitas Air</p>
-        <strong>{totalUjiAir}</strong>
-        <small>+{newWaterTestsLast7Days} 7 hari terakhir</small>
-      </div>
-    </article>
-    <article className="stat-card clickable" onClick={() => setView('uji_udara')}>
-      <span className="stat-icon purple">🌬️</span>
-      <div>
-        <p>Uji Kualitas Udara</p>
-        <strong>{totalUjiUdara}</strong>
-        <small>+{newAirTestsLast7Days} 7 hari terakhir</small>
-      </div>
-    </article>
-     <article className="stat-card clickable" onClick={() => setView('pangan')}>
-       <span className="stat-icon green">🍱</span>
-       <div>
-         <p>Hasil Pangan/Makanan</p>
-         <strong>{totalPangan}</strong>
-         <small>+{newFoodInspeksiLast7Days} 7 hari terakhir</small>
-       </div>
-     </article>
-     <article className="stat-card clickable" onClick={() => setView('entry')}>
-      <span className="stat-icon gold">⌂</span>
-      <div>
-        <p>Rumah Terdata</p>
-        <strong>{totalEntries}</strong>
-        <small>+{newEntriesLast7Days} minggu ini</small>
-      </div>
-    </article>
-    <article className="stat-card clickable" onClick={() => setView('pengguna')}>
-      <span className="stat-icon coral">👥</span>
-      <div>
-        <p>Kader & Relawan</p>
-        <strong>{totalPengguna}</strong>
-        <small>Petugas aktif</small>
-      </div>
-    </article>
-  </div>
 
-  {/* Status Terakhir */}
-  <div className="status-banner">
-    <div className="status-item">
-      <span className="status-dot synced"></span>
-      <span>Data Terakhir: {lastUpdateTime} WIB</span>
+  return <>
+    <div className="page-heading dashboard-heading">
+      <div>
+        <p className="eyebrow">DASHBOARD INFORMASI</p>
+        <h1>{greeting}, {firstName}.</h1>
+        <p>Ringkasan real-time wilayah kerja {pkmName} — periode {periodLabel}. Entry, Uji Air, Uji Udara, Pangan, Jentik, dan DBD dalam satu layar.</p>
+      </div>
+      <div className="dash-toolbar">
+        <button className="secondary" onClick={() => void loadSummary()} disabled={refreshing} type="button">{refreshing ? '⟳ Memperbarui…' : '⟳ Muat Ulang'}</button>
+        {access.entry && <button className="primary" onClick={() => setView('entry')} type="button">+ Input data rumah</button>}
+      </div>
     </div>
-    <div className="status-item">
-      <span className="status-dot synced"></span>
-      <span>Semua data tersinkronisasi</span>
-    </div>
-  </div>
 
-  {/* Aktivitas Terbaru */}
-  <section className="section-head">
-    <div>
-      <h2>Aktivitas terbaru</h2>
-      <p>Data rumah tangga yang Anda entri hari ini</p>
-    </div>
-    <button className="text-button" onClick={() => setView('entry')} type="button">Lihat semua</button>
-  </section>
-  <section className="entry-list">
-    {entries.slice(0, 5).map((entry) => {
-      // Dapatkan nama kelurahan untuk ditampilkan
-      const kelurahanName = kelurahan.find(k => k.id === entry.kelurahanId)?.name || 'Unknown'
-      const entryTime = new Date(entry.entryDate).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })
-      return (
-        <article className="entry-row" key={entry.id}>
-          <div className="house-icon">⌂</div>
-          <div className="entry-detail">
-            <strong>Entry #{entry.entryNumber}</strong>
-            <span>{entry.id} · {kelurahanName}</span>
+    {loadErrors.length > 0 && (
+      <div className="error-message">Sebagian sumber data belum bisa dimuat: {loadErrors.join(', ')}. Tekan “⟳ Muat Ulang” untuk mencoba lagi.</div>
+    )}
+
+    {summary === null ? (
+      <div className="empty-state"><span>📊</span><h2>Memuat ringkasan data…</h2><p>Mengambil data terbaru dari Supabase dan Google Sheet.</p></div>
+    ) : <>
+      {/* Status pembaruan */}
+      <div className="status-banner">
+        <div className="status-item">
+          <span className={`status-dot ${lastUpdated ? 'synced' : 'pending'}`} />
+          <span>{lastUpdated ? `Data diperbarui ${dashFormatTime(lastUpdated)} WIB` : 'Memuat data…'}</span>
+        </div>
+        <div className="status-item">
+          <span className="status-dot synced" />
+          <span>Refresh otomatis tiap 60 detik</span>
+        </div>
+        <div className="status-item">
+          <span className={`status-dot ${loadErrors.length > 0 ? 'pending' : 'synced'}`} />
+          <span>{loadErrors.length > 0 ? `${loadErrors.length} sumber data bermasalah` : 'Semua sumber data tersinkron'}</span>
+        </div>
+        <div className="status-item">
+          <span className="status-dot synced" />
+          <span>Periode {periodLabel}</span>
+        </div>
+      </div>
+
+      {/* Grid statistik utama */}
+      <div className="stat-grid">
+        {access.entry && <article className="stat-card clickable" onClick={() => setView('entry')}>
+          <span className="stat-icon gold">⌂</span>
+          <div>
+            <p>Rumah Terdata</p>
+            <strong>{entryTotal}</strong>
+            <small>Tahun berjalan · {yearLabel}</small>
           </div>
-          <div className="entry-status">
-            <span className="status synced">Tersinkron</span>
-            <small>{entryTime} WIB</small>
+        </article>}
+        {access.entry && <article className="stat-card clickable" onClick={() => setView('entry')}>
+          <span className="stat-icon teal">👥</span>
+          <div>
+            <p>Populasi Terdata</p>
+            <strong>{data.jiwa}</strong>
+            <small>{data.kk} KK · {data.jiwaMenetap} menetap · {data.jamban} jamban</small>
+          </div>
+        </article>}
+        {access.uji_air && <article className="stat-card clickable" onClick={() => setView('uji_air')}>
+          <span className="stat-icon cyan">💧</span>
+          <div>
+            <p>Uji Kualitas Air</p>
+            <strong>{waterTotal}</strong>
+            <small>Tahun berjalan · {yearLabel}</small>
+          </div>
+        </article>}
+        {access.uji_udara && <article className="stat-card clickable" onClick={() => setView('uji_udara')}>
+          <span className="stat-icon purple">🌬️</span>
+          <div>
+            <p>Uji Kualitas Udara</p>
+            <strong>{airTotal}</strong>
+            <small>Tahun berjalan · {yearLabel}</small>
+          </div>
+        </article>}
+        {access.pangan && <article className="stat-card clickable" onClick={() => setView('pangan')}>
+          <span className="stat-icon green">🍱</span>
+          <div>
+            <p>Hasil Pangan/Makanan</p>
+            <strong>{foodTotal}</strong>
+            <small>Tahun berjalan · {yearLabel}</small>
+          </div>
+        </article>}
+        {access.lokasi && <article className="stat-card clickable" onClick={() => setView('lokasi')}>
+          <span className="stat-icon blue">📍</span>
+          <div>
+            <p>Lokasi Terdaftar</p>
+            <strong>{locations.length}</strong>
+            <small>Titik pengamatan aktif</small>
+          </div>
+        </article>}
+        {access.pengguna && <article className="stat-card clickable" onClick={() => setView('pengguna')}>
+          <span className="stat-icon coral">👥</span>
+          <div>
+            <p>Kader & Relawan</p>
+            <strong>{data.users}</strong>
+            <small>Petugas terdaftar</small>
+          </div>
+        </article>}
+        {access.laporan && <article className="stat-card clickable" onClick={() => setView('laporan')}>
+          <span className="stat-icon gold">📊</span>
+          <div>
+            <p>Laporan Jentik</p>
+            <strong>{abjTotal}</strong>
+            <small>Tahun berjalan · {yearLabel}</small>
+          </div>
+        </article>}
+        {access.laporan_dbd && <article className="stat-card clickable" onClick={() => setView('laporan_dbd')}>
+          <span className="stat-icon coral">🦟</span>
+          <div>
+            <p>Laporan DBD</p>
+            <strong>{dbdTotal}</strong>
+            <small>Tahun berjalan · {yearLabel}</small>
+          </div>
+        </article>}
+      </div>
+
+      {/* Analisa & informasi */}
+      <section className="section-head">
+        <div>
+          <h2>Analisa & Informasi</h2>
+          <p>Indikator kesehatan lingkungan dan penyakit, dihitung otomatis dari seluruh modul</p>
+        </div>
+      </section>
+
+      <div className="dash-grid">
+        {access.uji_air && <article className="insight-card">
+          <header>
+            <span className="insight-icon">💧</span>
+            <h3>Kualitas Air</h3>
+            <em className={`badge ${waterBadge.cls}`}>{waterBadge.label}</em>
+          </header>
+          <strong className="insight-value">{waterPct === null ? '–' : `${waterPct}%`}</strong>
+          <p className="insight-hint">Sampel memenuhi standar (pH 6,5–8,5 · kekeruhan ≤ 5 · TDS ≤ 1000 · bebas E. coli)</p>
+          <ul className="insight-list">
+            <li><span>pH rata-rata</span><b>{avgPh === null ? '-' : avgPh.toFixed(1)}</b></li>
+            <li><span>Sampel diperiksa</span><b>{waterChecked} dari {waterTotal}</b></li>
+            <li><span>Periode data</span><b>{yearLabel}</b></li>
+          </ul>
+        </article>}
+
+        {access.uji_udara && <article className="insight-card">
+          <header>
+            <span className="insight-icon">🌬️</span>
+            <h3>Kualitas Udara</h3>
+            <em className={`badge ${airBadge.cls}`}>{airBadge.label}</em>
+          </header>
+          <strong className="insight-value">{avgPm25 === null ? '–' : `${avgPm25.toFixed(1)}`}<small className="insight-unit"> µg/m³ PM2.5</small></strong>
+          <p className="insight-hint">Ambang acuan: PM2.5 55 · PM10 80 µg/m³ · kebisingan 55 dB</p>
+          <ul className="insight-list">
+            <li><span>PM10 rata-rata</span><b>{avgPm10 === null ? '-' : `${avgPm10.toFixed(1)} µg/m³`}</b></li>
+            <li><span>Kebisingan rata-rata</span><b>{avgNoise === null ? '-' : `${avgNoise.toFixed(1)} dB`}</b></li>
+            <li><span>Melebihi ambang</span><b>{airOver} dari {airSampleCount} sampel</b></li>
+            <li><span>Periode data</span><b>{yearLabel}</b></li>
+          </ul>
+        </article>}
+
+        {access.pangan && <article className="insight-card">
+          <header>
+            <span className="insight-icon">🍱</span>
+            <h3>Keamanan Pangan</h3>
+            <em className={`badge ${foodBadge.cls}`}>{foodBadge.label}</em>
+          </header>
+          <strong className="insight-value">{foodSafePct === null ? '–' : `${foodSafePct}%`}</strong>
+          <p className="insight-hint">{foodFindings ? `Temuan: ${foodFindings}` : 'Belum ada temuan bahan berbahaya pada sampel'}</p>
+          <ul className="insight-list">
+            <li><span>Sampel diperiksa</span><b>{foodSamples}</b></li>
+            <li><span>Terindikasi zat berbahaya</span><b>{foodSamplesPositive}</b></li>
+            <li><span>Pemeriksaan lulus</span><b>{foodLulus} dari {foodTotal}</b></li>
+            <li><span>Periode data</span><b>{yearLabel}</b></li>
+          </ul>
+        </article>}
+
+        {access.laporan && <article className="insight-card">
+          <header>
+            <span className="insight-icon">🦟</span>
+            <h3>Angka Bebas Jentik</h3>
+            <em className={`badge ${abjBadge.cls}`}>{abjBadge.label}</em>
+          </header>
+          <strong className="insight-value">{abjPct === null ? '–' : `${abjPct.toFixed(1)}%`}</strong>
+          <p className="insight-hint">Target minimal 80% rumah negatif jentik</p>
+          <ul className="insight-list">
+            <li><span>Rumah diperiksa</span><b>{abjDiperiksa}</b></li>
+            <li><span>Positif jentik</span><b>{abjPositif}</b></li>
+            <li><span>Periode data</span><b>{yearLabel}</b></li>
+          </ul>
+        </article>}
+
+        {access.laporan_dbd && <article className="insight-card">
+          <header>
+            <span className="insight-icon">🩺</span>
+            <h3>Kasus DBD</h3>
+            <em className={`badge ${dbdBadge.cls}`}>{dbdBadge.label}</em>
+          </header>
+          <strong className="insight-value">{dbdTotal}<small className="insight-unit"> kasus</small></strong>
+          <p className="insight-hint">CFR {dbdCfr === null ? '-' : `${dbdCfr.toFixed(1)}%`} · rasio kematian terhadap total kasus</p>
+          <ul className="insight-list">
+            <li><span>Sembuh</span><b>{dbdSembuh}</b></li>
+            <li><span>Meninggal</span><b>{dbdMeninggal}</b></li>
+            <li><span>Periode data</span><b>{yearLabel}</b></li>
+          </ul>
+        </article>}
+
+        {access.entry && <article className="insight-card">
+          <header>
+            <span className="insight-icon">🏠</span>
+            <h3>Cakupan Pendataan</h3>
+            <em className={`badge ${entryTotal > 0 ? 'ok' : 'neutral'}`}>{entryTotal > 0 ? 'AKTIF TAHUN INI' : 'BELUM ADA UPDATE'}</em>
+          </header>
+          <strong className="insight-value">{entryTotal}<small className="insight-unit"> rumah</small></strong>
+          <p className="insight-hint">{data.jamban} jamban terdata — indikator penting pencegahan jentik & DBD</p>
+          <ul className="insight-list">
+            <li><span>Kartu keluarga</span><b>{data.kk} KK</b></li>
+            <li><span>Jiwa terdata</span><b>{data.jiwa} ({data.jiwaMenetap} menetap)</b></li>
+            <li><span>Periode data</span><b>{yearLabel}</b></li>
+          </ul>
+        </article>}
+      </div>
+
+      {/* Tren */}
+      <section className="section-head">
+        <div>
+          <h2>Tren Tahun Berjalan</h2>
+          <p>Pergerakan aktivitas pemeriksaan dan pelaporan per bulan · {periodLabel}</p>
+        </div>
+      </section>
+
+      <div className="dash-grid two">
+        <article className="chart-card">
+          <header>
+            <h3>Aktivitas Pemeriksaan</h3>
+            <span className="chart-total">{activityByMonth.reduce((sum, item) => sum + item, 0)} kegiatan</span>
+          </header>
+          <p className="chart-hint">Gabungan entry rumah, uji air, uji udara, dan pemeriksaan pangan</p>
+          <div className="bar-chart">
+            {months.map((month, index) => (
+              <div className="bar-col" key={`activity-${month.label}-${index}`} title={`${month.label}: ${activityByMonth[index]} kegiatan`}>
+                <span className="bar-num">{activityByMonth[index]}</span>
+                <div className="bar-track"><div className="bar" style={{ height: `${Math.round((activityByMonth[index] / maxActivity) * 100)}%` }} /></div>
+                <span className="bar-label">{month.label}</span>
+              </div>
+            ))}
           </div>
         </article>
-      )
-    })}
-    {entries.length === 0 && (
-      <div className="empty-state small">
-        <span>⌂</span>
-        <h3>Belum ada entri data</h3>
-        <p>Mulai input data rumah tangga Anda hari ini.</p>
+
+        {access.laporan && <article className="chart-card">
+          <header>
+            <h3>Jentik & DBD</h3>
+            <span className="chart-legend"><i className="legend-dot jentik" />Positif jentik <i className="legend-dot dbd" />Kasus DBD</span>
+          </header>
+          <p className="chart-hint">Perbandingan temuan positif jentik dan kasus DBD tiap bulan</p>
+          <div className="bar-chart">
+            {months.map((month, index) => (
+              <div className="bar-col" key={`cases-${month.label}-${index}`} title={`${month.label}: ${jentikByMonth[index]} positif jentik, ${dbdByMonth[index]} kasus DBD`}>
+                <span className="bar-num">{jentikByMonth[index] + dbdByMonth[index]}</span>
+                <div className="bar-track">
+                  <div className="bar jentik" style={{ height: `${Math.round((jentikByMonth[index] / maxCases) * 100)}%` }} />
+                  <div className="bar dbd" style={{ height: `${Math.round((dbdByMonth[index] / maxCases) * 100)}%` }} />
+                </div>
+                <span className="bar-label">{month.label}</span>
+              </div>
+            ))}
+          </div>
+        </article>}
       </div>
-    )}
-  </section></>
+
+      {/* Sebaran wilayah */}
+      <section className="section-head">
+        <div>
+          <h2>Sebaran per Kelurahan</h2>
+          <p>{distSubtitle}</p>
+        </div>
+        {access.wilayah && <button className="text-button" onClick={() => setView('wilayah')} type="button">Kelola wilayah</button>}
+      </section>
+
+      <div className="dist-card">
+        {topKel.length === 0 ? (
+          <p className="dist-empty">Belum ada data dengan informasi kelurahan.</p>
+        ) : topKel.map((item) => (
+          <div className="dist-row" key={item.name}>
+            <span className="dist-name">{item.name}</span>
+            <div className="dist-bar"><i style={{ width: `${Math.round((item.count / maxKel) * 100)}%` }} /></div>
+            <b className="dist-value">{item.count}</b>
+          </div>
+        ))}
+      </div>
+
+      {/* Aktivitas terbaru */}
+      <section className="section-head">
+        <div>
+          <h2>Aktivitas terbaru</h2>
+          <p>Entri, pemeriksaan, dan laporan terbaru dari semua modul</p>
+        </div>
+        <span className="chart-total">{feed.length} data</span>
+      </section>
+
+      <section className="entry-list">
+        {feedTop.map((item) => (
+          <article className="entry-row" key={item.key}>
+            <div className="house-icon">{item.icon}</div>
+            <div className="entry-detail">
+              <strong>{item.title}</strong>
+              <span>{item.sub}</span>
+            </div>
+            <div className="entry-status">
+              <span className="feed-module">{item.module}</span>
+              <small>{dashFormatDate(item.dateMs)}</small>
+            </div>
+            <button className="text-button" onClick={() => setView(item.view)} type="button">Lihat</button>
+          </article>
+        ))}
+        {feedTop.length === 0 && (
+          <div className="empty-state small">
+            <span>🔔</span>
+            <h3>Belum ada aktivitas</h3>
+            <p>Data dari semua modul akan tampil di sini secara real-time.</p>
+          </div>
+        )}
+      </section>
+    </>}
+  </>
 }
 
 function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null; kelurahan: Region[]; rw: Region[]; rt: Region[] }) {
@@ -1400,6 +2418,7 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
   const [nextEntryNumber, setNextEntryNumber] = useState(1)
+  const [searchKeyword, setSearchKeyword] = useState('')
   
   // Filter regions based on user profile
   const userKelurahan = profile?.kelurahanId ? kelurahan.filter(k => k.id === profile.kelurahanId) : kelurahan
@@ -1419,6 +2438,21 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
   const [questionnaireResponses, setQuestionnaireResponses] = useState<QuestionnaireResponse[]>([])
   const [currentKkIndex, setCurrentKkIndex] = useState(0)
 
+  function isSingleChoiceQuestionnaire(pillar: string) {
+    return pillar === 'jamban' || pillar === 'sumber_air'
+  }
+
+  function normalizeSingleChoiceResponses(responses: QuestionnaireResponse[]) {
+    const selectedKeys = new Set<string>()
+    return responses.map(response => {
+      if (!isSingleChoiceQuestionnaire(response.pillar) || !response.answer) return response
+      const key = `${response.familyCardId}:${response.pillar}`
+      if (selectedKeys.has(key)) return { ...response, answer: false }
+      selectedKeys.add(key)
+      return response
+    })
+  }
+
   async function loadEntries() {
     if (!supabase || !profile) {
       console.log('loadEntries: supabase or profile missing', { supabase: !!supabase, profile: !!profile })
@@ -1427,7 +2461,9 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
     }
     setLoading(true)
     try {
-      const { data, error } = await supabase.from('entries').select('*').eq('officer_id', profile.id).order('entry_date', { ascending: false })
+      let entriesQuery = supabase.from('entries').select('*')
+      if (profile.role === 'kader') entriesQuery = entriesQuery.eq('officer_id', profile.id)
+      const { data, error } = await entriesQuery.order('entry_date', { ascending: false })
       console.log('loadEntries result:', { data, error: error?.message })
       if (error) {
         console.error('Error loading entries:', error)
@@ -1440,31 +2476,76 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
         setLoading(false)
         return
       }
-      // Load family cards and questionnaire responses for each entry
-      const entriesWithDetails = await Promise.all(
-        data.map(async (entry: any) => {
-          const { data: fcData } = await supabase!.from('family_cards').select('*').eq('entry_id', entry.id)
-          const { data: qrData } = await supabase!.from('questionnaire_responses').select('*').in('family_card_id', fcData?.map((fc: any) => fc.id) || [])
-          return {
-            ...entry,
-            familyCards: (fcData || []).map((fc: any) => ({
-              id: fc.id,
-              entryId: fc.entry_id,
-              kkSequence: fc.kk_sequence,
-              kkNumber: fc.kk_number,
-              nikKepalaKeluarga: fc.nik_kepala_keluarga || '',
-              kepalaKeluarga: fc.kepala_keluarga || '',
-              address: fc.address,
-              totalJiwa: fc.total_jiwa,
-              jiwaMenetap: fc.jiwa_menetap,
-              jambanCount: fc.jamban_count
-            })),
-            questionnaireResponses: qrData || []
-          }
+      const entryIds = data.map((e: any) => e.id)
+      // Batch-load all family cards in a single query (fixes N+1)
+      const { data: fcData, error: fcError } = await supabase
+        .from('family_cards')
+        .select('*')
+        .in('entry_id', entryIds)
+      if (fcError) console.error('Error loading family cards:', fcError)
+      const fcArray = fcData || []
+      const fcIds = fcArray.map((fc: any) => fc.id)
+      // Batch-load all questionnaire responses in a single query
+      const { data: qrData, error: qrError } = await supabase
+        .from('questionnaire_responses')
+        .select('*')
+        .in('family_card_id', fcIds.length > 0 ? fcIds : [''])
+      if (qrError) console.error('Error loading questionnaire responses:', qrError)
+      const qrArray = qrData || []
+      // Group family cards by entry_id
+      const fcByEntryId = new Map<string, typeof fcArray>()
+      fcArray.forEach((fc: any) => {
+        const arr = fcByEntryId.get(fc.entry_id) || []
+        arr.push(fc)
+        fcByEntryId.set(fc.entry_id, arr)
+      })
+      // Group questionnaire responses by family_card_id
+      const qrByFcId = new Map<string, typeof qrArray>()
+      qrArray.forEach((qr: any) => {
+        const arr = qrByFcId.get(qr.family_card_id) || []
+        arr.push(qr)
+        qrByFcId.set(qr.family_card_id, arr)
+      })
+      // Map entries with proper camelCase conversion and grouped relations
+      const entriesWithDetails: Entry[] = data.map((entry: any) => {
+        const fcs = fcByEntryId.get(entry.id) || []
+        const allQr: QuestionnaireResponse[] = []
+        fcs.forEach((fc: any) => {
+          const fcrs = qrByFcId.get(fc.id) || []
+          fcrs.forEach((qr: any) => {
+            allQr.push({
+              id: qr.id,
+              familyCardId: qr.family_card_id,
+              pillar: qr.pillar,
+              questionCode: qr.question_code,
+              answer: qr.answer
+            })
+          })
         })
-      )
+        return {
+          id: entry.id,
+          entryNumber: entry.entry_number,
+          entryDate: entry.entry_date,
+          officerId: entry.officer_id,
+          kelurahanId: entry.kelurahan_id,
+          rwId: entry.rw_id,
+          rtId: entry.rt_id,
+          familyCards: fcs.map((fc: any) => ({
+            id: fc.id,
+            entryId: fc.entry_id,
+            kkSequence: fc.kk_sequence,
+            kkNumber: fc.kk_number,
+            nikKepalaKeluarga: fc.nik_kepala_keluarga || '',
+            kepalaKeluarga: fc.kepala_keluarga || '',
+            address: fc.address,
+            totalJiwa: fc.total_jiwa,
+            jiwaMenetap: fc.jiwa_menetap,
+            jambanCount: fc.jamban_count
+          })),
+          questionnaireResponses: allQr
+        }
+      })
       setEntries(entriesWithDetails)
-      // Update next entry number after loading all entries, pass the loaded entries directly
       void getNextEntryNumber(entriesWithDetails)
     } catch (err) {
       console.error('Unexpected error in loadEntries:', err)
@@ -1513,8 +2594,57 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
 
   useEffect(() => {
     void loadEntries()
-    void getNextEntryNumber()
   }, [profile])
+
+  // Filter entries based on search keyword
+  const filteredEntries = entries.filter(entry => {
+    if (!searchKeyword.trim()) return true
+    const kw = searchKeyword.toLowerCase()
+    const kelName = kelurahan.find(k => k.id === entry.kelurahanId)?.name || ''
+    const rwName = entry.rwId ? rw.find(r => r.id === entry.rwId)?.name || '' : ''
+    const rtName = entry.rtId ? rt.find(r => r.id === entry.rtId)?.name || '' : ''
+    const firstKk = entry.familyCards[0]
+    
+    return entry.entryDate.includes(searchKeyword)
+      || entry.entryNumber.toString().includes(kw)
+      || kelName.toLowerCase().includes(kw)
+      || rwName.toLowerCase().includes(kw)
+      || rtName.toLowerCase().includes(kw)
+      || firstKk?.kepalaKeluarga.toLowerCase().includes(kw)
+      || firstKk?.kkNumber.toLowerCase().includes(kw)
+      || firstKk?.nikKepalaKeluarga.toLowerCase().includes(kw)
+  })
+
+  function exportExcel() {
+    if (filteredEntries.length === 0) { window.alert('Tidak ada data entry untuk diexport.'); return }
+    const header = ['No', 'Nomor Entry', 'Tanggal', 'Kelurahan', 'RW', 'RT', 'KK Pertama', 'Kepala Keluarga', 'NIK', 'Total KK', 'Total Jiwa', 'Jiwa Menetap', 'Total Jamban']
+    const rows: (string | number)[][] = []
+    filteredEntries.forEach((entry, idx) => {
+      const kelName = entry.kelurahanId ? kelurahan.find(k => k.id === entry.kelurahanId)?.name : undefined
+      const rwName = entry.rwId ? rw.find(r => r.id === entry.rwId)?.name : undefined
+      const rtName = entry.rtId ? rt.find(r => r.id === entry.rtId)?.name : undefined
+      const firstKk = entry.familyCards[0]
+      const totalJamban = entry.familyCards.reduce((sum, fc) => sum + (fc.jambanCount || 0), 0)
+      
+      rows.push([
+        idx + 1,
+        entry.entryNumber,
+        entry.entryDate,
+        kelName ?? '-',
+        rwName ? `RW ${rwName}` : '-',
+        rtName ? `RT ${rtName}` : '-',
+        firstKk?.kkNumber || '-',
+        firstKk?.kepalaKeluarga || '-',
+        firstKk?.nikKepalaKeluarga || '-',
+        entry.familyCards.length,
+        entry.familyCards.reduce((sum, fc) => sum + (fc.totalJiwa || 0), 0),
+        entry.familyCards.reduce((sum, fc) => sum + (fc.jiwaMenetap || 0), 0),
+        totalJamban
+      ])
+    })
+    const today = new Date().toISOString().slice(0, 10)
+    exportToExcel({ fileName: `data_entry_${today}.xlsx`, sheetName: 'Data Entry', header, rows })
+  }
 
   function openForm(entry?: Entry) {
     setEditing(entry ?? null)
@@ -1523,7 +2653,7 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
     setSelectedRwId(entry?.rwId || profile?.rwId || '')
     setSelectedRtId(entry?.rtId || profile?.rtId || '')
     setFamilyCards(entry?.familyCards || [])
-    setQuestionnaireResponses(entry?.questionnaireResponses || [])
+    setQuestionnaireResponses(normalizeSingleChoiceResponses(entry?.questionnaireResponses || []))
     setCurrentKkIndex(0)
     setFormOpen(true)
     if (!entry) void getNextEntryNumber()
@@ -1611,6 +2741,7 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
           entry_number: entryNumber,
           entry_date: String(data.get('entryDate')),
           officer_id: profile.id,
+          created_by: profile.id,
           kelurahan_id: selectedKelurahanId,
           rw_id: selectedRwId,
           rt_id: selectedRtId
@@ -1756,7 +2887,10 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
         <h1>Data Rumah & Keluarga</h1>
         <p>Kelola data entry kader/relawan dengan auto-filter wilayah.</p>
       </div>
-      <button className="primary" onClick={() => openForm()} type="button">+ Tambah Entry</button>
+      <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+        <button className="secondary" onClick={exportExcel} type="button" disabled={entries.length === 0}>Export Excel</button>
+        <button className="primary" onClick={() => openForm()} type="button">+ Tambah Entry</button>
+      </div>
     </div>
 
     {formOpen && <form className="entry-form" onSubmit={submit}>
@@ -1841,10 +2975,9 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
                 updated[index].jiwaMenetap = parseInt(e.target.value) || 0
                 setFamilyCards(updated)
               }} inputMode="numeric" /></label>
-              <label>Jumlah Sarana Jamban<input type="text" value={fc.jambanCount || ''} onChange={(e) => {
-                const digits = e.target.value.replace(/\D/g, '')
+              <label>Jumlah Sarana Jamban<input type="number" value={fc.jambanCount || ''} onChange={(e) => {
                 const updated = [...familyCards]
-                updated[index].jambanCount = digits === '' ? 0 : Number(digits)
+                updated[index].jambanCount = parseInt(e.target.value) || 0
                 setFamilyCards(updated)
               }} inputMode="numeric" /></label>
             </div>
@@ -1857,10 +2990,10 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
               <div style={{ marginTop: '16px' }}>
                 {Object.entries(questionnaireData).map(([pillar, questions]) => (
                   <div key={pillar} style={{ marginBottom: '24px' }}>
-                    <h3 style={{ marginBottom: '12px', textTransform: 'capitalize' }}>{pillar === 'jamban' ? 'Fasilitas Jamban' : pillar.replace('_', ' ')}</h3>
+                    <h3 style={{ marginBottom: '12px', textTransform: 'capitalize' }}>{pillar === 'fasilitas_jamban' ? 'Fasilitas Jamban' : pillar.replace('_', ' ')}</h3>
                     {questions.map(q => {
                       const tempFamilyCardId = fc.id || `temp-${index}`
-                      const isSingleChoice = pillar === 'sumber_air'
+                      const isSingleChoice = isSingleChoiceQuestionnaire(pillar)
                       return (
                         <div key={q.code} style={{ marginBottom: '8px' }}>
                           <label style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -1872,18 +3005,22 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
                               )?.answer || false}
                               onChange={(e) => {
                                 if (isSingleChoice) {
-                                  // For radio buttons: clear all other answers in this pillar
                                   setQuestionnaireResponses(prev => {
-                                    const filtered = prev.filter(qr => 
+                                    // Remove all existing responses for this pillar and family card
+                                    const filtered = prev.filter(qr =>
                                       !(qr.familyCardId === tempFamilyCardId && qr.pillar === pillar)
                                     )
-                                    return [...filtered, {
-                                      id: '',
-                                      familyCardId: tempFamilyCardId,
-                                      pillar,
-                                      questionCode: q.code,
-                                      answer: true
-                                    }]
+                                    // Add the new selected response
+                                    return [
+                                      ...filtered,
+                                      {
+                                        id: '',
+                                        familyCardId: tempFamilyCardId,
+                                        pillar,
+                                        questionCode: q.code,
+                                        answer: true
+                                      }
+                                    ]
                                   })
                                 } else {
                                   // For checkboxes: toggle as before
@@ -1912,21 +3049,93 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
 
     {!formOpen && entries.length === 0 && <div className="empty-state"><span>⌂</span><h2>Belum ada data entry</h2><p>Klik tombol di atas untuk menambahkan data entry baru.</p></div>}
 
-    {!formOpen && entries.length > 0 && <section className="entry-list">
-      {entries.map(entry => (
-        <article className="entry-row" key={entry.id}>
-          <div className="house-icon">⌂</div>
-          <div className="entry-detail">
-            <strong>Entry #{entry.entryNumber}</strong>
-            <span>{entry.entryDate} · {entry.familyCards.length} KK</span>
+    {!formOpen && entries.length > 0 && (
+      <>
+        {/* Filter Pencarian */}
+        <div className="form-section" style={{ padding: '16px', marginBottom: '20px' }}>
+          <div className="form-grid" style={{ gridTemplateColumns: 'repeat(2, 1fr)', gap: '16px', margin: 0 }}>
+            <label>Pencarian
+              <input 
+                type="text" 
+                value={searchKeyword} 
+                onChange={(e) => setSearchKeyword(e.target.value)}
+                placeholder="Cari nomor entry, tanggal, lokasi, KK, nama, atau NIK..." 
+              />
+            </label>
+            <div style={{ display: 'flex', alignItems: 'flex-end' }}>
+              <button 
+                className="secondary" 
+                onClick={() => setSearchKeyword('')}
+                style={{ width: '100%' }}
+              >
+                Reset Pencarian
+              </button>
+            </div>
           </div>
-          <div className="entry-actions">
-            <button className="text-button" onClick={() => openForm(entry)} type="button">Edit</button>
-            <button className="text-button" onClick={() => deleteEntry(entry)} type="button">Hapus</button>
-          </div>
-        </article>
-      ))}
-    </section>}
+        </div>
+        <div className="data-table-container">
+          <table className="data-table entry-results-table">
+            <thead>
+              <tr>
+                <th style={{ width: '50px' }}>No</th>
+                <th>Nomor Entry</th>
+                <th>Tanggal</th>
+                <th>Lokasi</th>
+                <th>KK Pertama</th>
+                <th>Kepala Keluarga</th>
+                <th>Total KK</th>
+                <th>Total Jiwa</th>
+                <th>Jiwa Menetap</th>
+                <th>Total Jamban</th>
+                <th>Aksi</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredEntries.map((entry, index) => {
+                const kelName = kelurahan.find(k => k.id === entry.kelurahanId)?.name || '-'
+                const rwName = entry.rwId ? rw.find(r => r.id === entry.rwId)?.name : undefined
+                const rtName = entry.rtId ? rt.find(r => r.id === entry.rtId)?.name : undefined
+                const firstKk = entry.familyCards[0]
+                const totalJamban = entry.familyCards.reduce((sum, fc) => sum + (fc.jambanCount || 0), 0)
+                
+                return (
+                  <tr key={entry.id}>
+                    <td style={{ textAlign: 'center', fontWeight: 600 }}>{index + 1}</td>
+                    <td style={{ textAlign: 'center', fontWeight: 600 }}>{entry.entryNumber || '-'}</td>
+                    <td>{entry.entryDate}</td>
+                    <td>
+                      <div style={{ fontWeight: 500 }}>{kelName}</div>
+                      <small style={{ color: '#666' }}>
+                        {rwName && `RW ${rwName}`} {rtName && `RT ${rtName}`}
+                      </small>
+                    </td>
+                    <td style={{ textAlign: 'center' }}>{firstKk?.kkNumber || '-'}</td>
+                    <td>
+                      <div style={{ fontWeight: 500 }}>{firstKk?.kepalaKeluarga || '-'}</div>
+                      {firstKk?.nikKepalaKeluarga && (
+                        <small style={{ color: '#666', fontSize: '11px' }}>
+                          NIK: {firstKk.nikKepalaKeluarga}
+                        </small>
+                      )}
+                    </td>
+                    <td style={{ textAlign: 'center', fontWeight: 600 }}>{entry.familyCards.length}</td>
+                    <td style={{ textAlign: 'center', fontWeight: 600 }}>{entry.familyCards.reduce((sum, fc) => sum + (fc.totalJiwa || 0), 0)}</td>
+                    <td style={{ textAlign: 'center', fontWeight: 600 }}>{entry.familyCards.reduce((sum, fc) => sum + (fc.jiwaMenetap || 0), 0)}</td>
+                    <td style={{ textAlign: 'center', fontWeight: 600 }}>{totalJamban}</td>
+                    <td>
+                      <div className="entry-actions">
+                        <button className="text-button" onClick={() => openForm(entry)} type="button">Edit</button>
+                        <button className="text-button" onClick={() => deleteEntry(entry)} type="button">Hapus</button>
+                      </div>
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      </>
+    )}
   </section>
 }
 
@@ -2561,13 +3770,7 @@ function UjiAirPage({ profile, locations, kelurahan, waterTests, setWaterTests }
   const [formOpen, setFormOpen] = useState(false)
   // State untuk filter lokasi
   const [filterKelurahanId, setFilterKelurahanId] = useState('')
-  const [filterLocationId, setFilterLocationId] = useState('')
-  
-  // Filter lokasi berdasarkan kelurahan yang dipilih
-  const filteredLocations = locations.filter(loc => {
-    if (!filterKelurahanId) return true
-    return loc.kelurahanId === filterKelurahanId
-  })
+  const [searchQuery, setSearchQuery] = useState('')
   
   // Filter tests berdasarkan filter yang dipilih
   const filteredTests = tests.filter(test => {
@@ -2575,7 +3778,11 @@ function UjiAirPage({ profile, locations, kelurahan, waterTests, setWaterTests }
       const location = locations.find(loc => loc.id === test.locationId)
       if (location?.kelurahanId !== filterKelurahanId) return false
     }
-    if (filterLocationId && test.locationId !== filterLocationId) return false
+    if (searchQuery.trim()) {
+      const query = searchQuery.toLowerCase()
+      const info = getLocationInfo(test.locationId)
+      if (!info.name.toLowerCase().includes(query) && !info.kelurahanName.toLowerCase().includes(query) && !test.testDate.toLowerCase().includes(query)) return false
+    }
     return true
   })
   const [editing, setEditing] = useState<WaterQualityTest | null>(null)
@@ -2615,8 +3822,8 @@ function UjiAirPage({ profile, locations, kelurahan, waterTests, setWaterTests }
     { key: 'colorValue', label: 'Warna' },
     { key: 'odorValue', label: 'Bau' },
     { key: 'phValue', label: 'pH' },
-    { key: 'nitriteValue', label: 'Nitrit (mg/L)' },
     { key: 'nitrateValue', label: 'Nitrat (mg/L)' },
+    { key: 'nitriteValue', label: 'Nitrit (mg/L)' },
     { key: 'chromiumValue', label: 'Chromium (mg/L)' },
     { key: 'ironValue', label: 'Besi (mg/L)' },
     { key: 'manganeseValue', label: 'Mangan (mg/L)' },
@@ -2651,17 +3858,17 @@ function UjiAirPage({ profile, locations, kelurahan, waterTests, setWaterTests }
       return
     }
     const header = [
-      'Lokasi',
       'Tanggal Uji',
-      'Suhu Air',
+      'Lokasi',
       'Suhu Udara',
-      'Warna',
-      'Bau',
+      'Suhu Air',
       'TDS',
       'Kekeruhan',
+      'Warna',
+      'Bau',
       'pH',
-      'Nitrit',
       'Nitrat',
+      'Nitrit',
       'Chromium',
       'Besi',
       'Mangan',
@@ -2676,17 +3883,17 @@ function UjiAirPage({ profile, locations, kelurahan, waterTests, setWaterTests }
       const info = getLocationInfo(test.locationId)
       const lokasiCell = info.kelurahanName ? `${info.name}\n${info.kelurahanName}` : info.name
       return [
-        lokasiCell,
         test.testDate,
-        formatWaterValue(test.waterTemperatureValue, test.waterTemperatureUnit),
+        lokasiCell,
         formatWaterValue(test.airTemperatureValue, test.airTemperatureUnit),
-        formatWaterValue(test.colorValue),
-        formatWaterValue(test.odorValue),
+        formatWaterValue(test.waterTemperatureValue, test.waterTemperatureUnit),
         formatWaterValue(test.tdsValue),
         formatWaterValue(test.turbidityValue),
+        formatWaterValue(test.colorValue),
+        formatWaterValue(test.odorValue),
         formatWaterValue(test.phValue),
-        formatWaterValue(test.nitriteValue),
         formatWaterValue(test.nitrateValue),
+        formatWaterValue(test.nitriteValue),
         formatWaterValue(test.chromiumValue),
         formatWaterValue(test.ironValue),
         formatWaterValue(test.manganeseValue),
@@ -2724,7 +3931,9 @@ function UjiAirPage({ profile, locations, kelurahan, waterTests, setWaterTests }
     setLoading(true)
     try {
       console.log('Loading water quality tests for officer:', profile.id)
-      const { data, error: loadError } = await supabase.from('water_quality_tests').select('*').eq('officer_id', profile.id).order('test_date', { ascending: false })
+      let waterQuery = supabase.from('water_quality_tests').select('*')
+      if (profile.role === 'kader') waterQuery = waterQuery.eq('officer_id', profile.id)
+      const { data, error: loadError } = await waterQuery.order('test_date', { ascending: false })
       console.log('Load water quality tests result:', { data, error: loadError?.message, dataLength: data?.length })
       
       if (loadError) {
@@ -2751,12 +3960,14 @@ function UjiAirPage({ profile, locations, kelurahan, waterTests, setWaterTests }
     }
   }
 
-  // Only load tests after both profile and locations are available
+  // Load tests when profile is available (locations not required for fetching by officer_id)
   useEffect(() => {
-    if (profile && locations.length > 0) {
+    if (profile) {
       void loadTests()
+    } else {
+      setLoading(false)
     }
-  }, [profile, locations, kelurahan])
+  }, [profile])
 
   function openForm(test?: WaterQualityTest) {
     setEditing(test ?? null)
@@ -2845,11 +4056,11 @@ function UjiAirPage({ profile, locations, kelurahan, waterTests, setWaterTests }
       return
     }
 
-    // Validasi input kolom entry (kecuali Catatan): hanya angka atau simbol matematika (<, >, =, +, -, /)
+    // Validasi input kolom entry (kecuali Catatan): hanya angka atau simbol matematika (<, >, =, +, -, /, koma, titik)
     for (const field of ujiAirEntryFields) {
       const value = String(formData[field.key] ?? '')
       if (!isUjiAirValueValid(value, 'final')) {
-        setError(`Nilai ${field.label} hanya boleh berupa angka atau simbol (<, >, =, +, -, /).`)
+        setError(`Nilai ${field.label} hanya boleh berupa angka atau simbol (<, >, =, +, -, /, koma, titik).`)
         setSubmitting(false)
         return
       }
@@ -2998,7 +4209,7 @@ function UjiAirPage({ profile, locations, kelurahan, waterTests, setWaterTests }
         <div className="form-grid">
           <label><span className="entry-no">{nextEntryNo()}.</span> Suhu Udara
             <div className="inline-fields">
-              <input type="text" inputMode="text" value={formData.airTemperatureValue} onChange={(e) => setValidatedUjiValue('airTemperatureValue', e.target.value)} placeholder="Angka/simbol: < > = + - /" />
+              <input type="text" inputMode="text" value={formData.airTemperatureValue} onChange={(e) => setValidatedUjiValue('airTemperatureValue', e.target.value)} placeholder="Angka/simbol: < > = + - / , ." />
               <select value={formData.airTemperatureUnit} onChange={(e) => setFormData({ ...formData, airTemperatureUnit: e.target.value as 'K' | 'C' | 'F' | 'R' })}>
                 <option value="K">K</option>
                 <option value="C">C</option>
@@ -3009,7 +4220,7 @@ function UjiAirPage({ profile, locations, kelurahan, waterTests, setWaterTests }
           </label>
           <label><span className="entry-no">{nextEntryNo()}.</span> Suhu Air
             <div className="inline-fields">
-              <input type="text" inputMode="text" value={formData.waterTemperatureValue} onChange={(e) => setValidatedUjiValue('waterTemperatureValue', e.target.value)} placeholder="Angka/simbol: < > = + - /" />
+              <input type="text" inputMode="text" value={formData.waterTemperatureValue} onChange={(e) => setValidatedUjiValue('waterTemperatureValue', e.target.value)} placeholder="Angka/simbol: < > = + - / , ." />
               <select value={formData.waterTemperatureUnit} onChange={(e) => setFormData({ ...formData, waterTemperatureUnit: e.target.value as 'K' | 'C' | 'F' | 'R' })}>
                 <option value="K">K</option>
                 <option value="C">C</option>
@@ -3018,33 +4229,33 @@ function UjiAirPage({ profile, locations, kelurahan, waterTests, setWaterTests }
               </select>
             </div>
           </label>
-          <label><span className="entry-no">{nextEntryNo()}.</span> TDS (mg/L)<input value={formData.tdsValue} onChange={(e) => setValidatedUjiValue('tdsValue', e.target.value)} placeholder="Angka/simbol: < > = + - /" /></label>
-          <label><span className="entry-no">{nextEntryNo()}.</span> Kekeruhan (NTU)<input value={formData.turbidityValue} onChange={(e) => setValidatedUjiValue('turbidityValue', e.target.value)} placeholder="Angka/simbol: < > = + - /" /></label>
-          <label><span className="entry-no">{nextEntryNo()}.</span> Warna (TCU)<input value={formData.colorValue} onChange={(e) => setValidatedUjiValue('colorValue', e.target.value)} placeholder="Angka/simbol: < > = + - /" /></label>
-          <label><span className="entry-no">{nextEntryNo()}.</span> Bau<input value={formData.odorValue} onChange={(e) => setValidatedUjiValue('odorValue', e.target.value)} placeholder="Angka/simbol: < > = + - /" /></label>
+          <label><span className="entry-no">{nextEntryNo()}.</span> TDS (mg/L)<input value={formData.tdsValue} onChange={(e) => setValidatedUjiValue('tdsValue', e.target.value)} placeholder="Angka/simbol: < > = + - / , ." /></label>
+          <label><span className="entry-no">{nextEntryNo()}.</span> Kekeruhan (NTU)<input value={formData.turbidityValue} onChange={(e) => setValidatedUjiValue('turbidityValue', e.target.value)} placeholder="Angka/simbol: < > = + - / , ." /></label>
+          <label><span className="entry-no">{nextEntryNo()}.</span> Warna (TCU)<input value={formData.colorValue} onChange={(e) => setValidatedUjiValue('colorValue', e.target.value)} placeholder="Angka/simbol: < > = + - / , ." /></label>
+          <label><span className="entry-no">{nextEntryNo()}.</span> Bau<input value={formData.odorValue} onChange={(e) => setValidatedUjiValue('odorValue', e.target.value)} placeholder="Angka/simbol: < > = + - / , ." /></label>
         </div>
       </section>
 
       <section className="form-section">
         <h2>Kimia</h2>
         <div className="form-grid">
-          <label><span className="entry-no">{nextEntryNo()}.</span> pH<input value={formData.phValue} onChange={(e) => setValidatedUjiValue('phValue', e.target.value)} placeholder="Angka/simbol: < > = + - /" /></label>
-          <label><span className="entry-no">{nextEntryNo()}.</span> Nitrit (mg/L)<input value={formData.nitriteValue} onChange={(e) => setValidatedUjiValue('nitriteValue', e.target.value)} placeholder="Angka/simbol: < > = + - /" /></label>
-          <label><span className="entry-no">{nextEntryNo()}.</span> Nitrat (mg/L)<input value={formData.nitrateValue} onChange={(e) => setValidatedUjiValue('nitrateValue', e.target.value)} placeholder="Angka/simbol: < > = + - /" /></label>
-          <label><span className="entry-no">{nextEntryNo()}.</span> Chromium (mg/L)<input value={formData.chromiumValue} onChange={(e) => setValidatedUjiValue('chromiumValue', e.target.value)} placeholder="Angka/simbol: < > = + - /" /></label>
-          <label><span className="entry-no">{nextEntryNo()}.</span> Besi (mg/L)<input value={formData.ironValue} onChange={(e) => setValidatedUjiValue('ironValue', e.target.value)} placeholder="Angka/simbol: < > = + - /" /></label>
-          <label><span className="entry-no">{nextEntryNo()}.</span> Mangan (mg/L)<input value={formData.manganeseValue} onChange={(e) => setValidatedUjiValue('manganeseValue', e.target.value)} placeholder="Angka/simbol: < > = + - /" /></label>
-          <label><span className="entry-no">{nextEntryNo()}.</span> Chlorine (mg/L)<input value={formData.chlorineValue} onChange={(e) => setValidatedUjiValue('chlorineValue', e.target.value)} placeholder="Angka/simbol: < > = + - /" /></label>
-          <label><span className="entry-no">{nextEntryNo()}.</span> Fluorida (mg/L)<input value={formData.fluorideValue} onChange={(e) => setValidatedUjiValue('fluorideValue', e.target.value)} placeholder="Angka/simbol: < > = + - /" /></label>
-          <label><span className="entry-no">{nextEntryNo()}.</span> Aluminium (mg/L)<input value={formData.aluminumValue} onChange={(e) => setValidatedUjiValue('aluminumValue', e.target.value)} placeholder="Angka/simbol: < > = + - /" /></label>
+          <label><span className="entry-no">{nextEntryNo()}.</span> pH<input value={formData.phValue} onChange={(e) => setValidatedUjiValue('phValue', e.target.value)} placeholder="Angka/simbol: < > = + - / , ." /></label>
+          <label><span className="entry-no">{nextEntryNo()}.</span> Nitrat (mg/L)<input value={formData.nitrateValue} onChange={(e) => setValidatedUjiValue('nitrateValue', e.target.value)} placeholder="Angka/simbol: < > = + - / , ." /></label>
+          <label><span className="entry-no">{nextEntryNo()}.</span> Nitrit (mg/L)<input value={formData.nitriteValue} onChange={(e) => setValidatedUjiValue('nitriteValue', e.target.value)} placeholder="Angka/simbol: < > = + - / , ." /></label>
+          <label><span className="entry-no">{nextEntryNo()}.</span> Chromium (mg/L)<input value={formData.chromiumValue} onChange={(e) => setValidatedUjiValue('chromiumValue', e.target.value)} placeholder="Angka/simbol: < > = + - / , ." /></label>
+          <label><span className="entry-no">{nextEntryNo()}.</span> Besi (mg/L)<input value={formData.ironValue} onChange={(e) => setValidatedUjiValue('ironValue', e.target.value)} placeholder="Angka/simbol: < > = + - / , ." /></label>
+          <label><span className="entry-no">{nextEntryNo()}.</span> Mangan (mg/L)<input value={formData.manganeseValue} onChange={(e) => setValidatedUjiValue('manganeseValue', e.target.value)} placeholder="Angka/simbol: < > = + - / , ." /></label>
+          <label><span className="entry-no">{nextEntryNo()}.</span> Chlorine (mg/L)<input value={formData.chlorineValue} onChange={(e) => setValidatedUjiValue('chlorineValue', e.target.value)} placeholder="Angka/simbol: < > = + - / , ." /></label>
+          <label><span className="entry-no">{nextEntryNo()}.</span> Fluorida (mg/L)<input value={formData.fluorideValue} onChange={(e) => setValidatedUjiValue('fluorideValue', e.target.value)} placeholder="Angka/simbol: < > = + - / , ." /></label>
+          <label><span className="entry-no">{nextEntryNo()}.</span> Aluminium (mg/L)<input value={formData.aluminumValue} onChange={(e) => setValidatedUjiValue('aluminumValue', e.target.value)} placeholder="Angka/simbol: < > = + - / , ." /></label>
         </div>
       </section>
 
       <section className="form-section">
         <h2>Mikrobiologi</h2>
         <div className="form-grid">
-          <label><span className="entry-no">{nextEntryNo()}.</span> E-coli (MPN/100ml)<input value={formData.eColiValue} onChange={(e) => setValidatedUjiValue('eColiValue', e.target.value)} placeholder="Angka/simbol: < > = + - /" /></label>
-          <label><span className="entry-no">{nextEntryNo()}.</span> Coliform (MPN/100ml)<input value={formData.coliformValue} onChange={(e) => setValidatedUjiValue('coliformValue', e.target.value)} placeholder="Angka/simbol: < > = + - /" /></label>
+          <label><span className="entry-no">{nextEntryNo()}.</span> E-coli (MPN/100ml)<input value={formData.eColiValue} onChange={(e) => setValidatedUjiValue('eColiValue', e.target.value)} placeholder="Angka/simbol: < > = + - / , ." /></label>
+          <label><span className="entry-no">{nextEntryNo()}.</span> Coliform (MPN/100ml)<input value={formData.coliformValue} onChange={(e) => setValidatedUjiValue('coliformValue', e.target.value)} placeholder="Angka/simbol: < > = + - / , ." /></label>
         </div>
       </section>
 
@@ -3065,7 +4276,7 @@ function UjiAirPage({ profile, locations, kelurahan, waterTests, setWaterTests }
 
     {!formOpen && tests.length > 0 && (
       <>
-        {/* Filter Lokasi */}
+        {/* Filter Lokasi & Pencarian */}
         <div className="form-section" style={{ padding: '16px', marginBottom: '20px' }}>
           <div className="form-grid" style={{ gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px', margin: 0 }}>
             <label>Filter Kelurahan
@@ -3073,27 +4284,24 @@ function UjiAirPage({ profile, locations, kelurahan, waterTests, setWaterTests }
                 value={filterKelurahanId} 
                 onChange={(e) => { 
                   setFilterKelurahanId(e.target.value)
-                  setFilterLocationId('') // Reset lokasi saat kelurahan berubah
                 }}
               >
                 <option value="">Semua Kelurahan</option>
                 {kelurahan.map(k => <option key={k.id} value={k.id}>{k.name}</option>)}
               </select>
             </label>
-            <label>Filter Lokasi
-              <select 
-                value={filterLocationId} 
-                onChange={(e) => setFilterLocationId(e.target.value)}
-                disabled={!filterKelurahanId && filteredLocations.length === locations.length}
-              >
-                <option value="">Semua Lokasi</option>
-                {filteredLocations.map(loc => <option key={loc.id} value={loc.id}>{loc.name}</option>)}
-              </select>
+            <label>Pencarian
+              <input 
+                type="text" 
+                value={searchQuery} 
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Cari lokasi, kelurahan, atau tanggal..." 
+              />
             </label>
             <div style={{ display: 'flex', alignItems: 'flex-end' }}>
               <button 
                 className="secondary" 
-                onClick={() => { setFilterKelurahanId(''); setFilterLocationId('') }}
+                onClick={() => { setFilterKelurahanId(''); setSearchQuery('') }}
                 style={{ width: '100%' }}
               >
                 Reset Filter
@@ -3106,17 +4314,17 @@ function UjiAirPage({ profile, locations, kelurahan, waterTests, setWaterTests }
           <thead>
             <tr>
               <th style={{ width: '50px' }}>No</th>
-              <th>Lokasi</th>
               <th>Tanggal Uji</th>
+              <th>Lokasi</th>
               <th>Suhu Udara</th>
               <th>Suhu Air</th>
-              <th>Warna</th>
-              <th>Bau</th>
               <th>TDS</th>
               <th>Kekeruhan</th>
+              <th>Warna</th>
+              <th>Bau</th>
               <th>pH</th>
-              <th>Nitrit</th>
               <th>Nitrat</th>
+              <th>Nitrit</th>
               <th>Chromium</th>
               <th>Besi</th>
               <th>Mangan</th>
@@ -3135,17 +4343,17 @@ function UjiAirPage({ profile, locations, kelurahan, waterTests, setWaterTests }
               return (
                 <tr key={test.id}>
                   <td style={{ textAlign: 'center', fontWeight: '600' }}>{index + 1}</td>
-                  <td><strong>{locationInfo.name}</strong>{locationInfo.kelurahanName && <> <br /><small>{locationInfo.kelurahanName}</small></>}</td>
                   <td>{test.testDate}</td>
+                  <td><strong>{locationInfo.name}</strong>{locationInfo.kelurahanName && <> <br /><small>{locationInfo.kelurahanName}</small></>}</td>
                   <td className={isEmptyUjiAirValue(test.airTemperatureValue) ? 'uji-empty-cell' : undefined}>{formatWaterValue(test.airTemperatureValue, test.airTemperatureUnit)}</td>
                   <td className={isEmptyUjiAirValue(test.waterTemperatureValue) ? 'uji-empty-cell' : undefined}>{formatWaterValue(test.waterTemperatureValue, test.waterTemperatureUnit)}</td>
-                  <td className={isEmptyUjiAirValue(test.colorValue) ? 'uji-empty-cell' : undefined}>{formatWaterValue(test.colorValue)}</td>
-                  <td className={isEmptyUjiAirValue(test.odorValue) ? 'uji-empty-cell' : undefined}>{formatWaterValue(test.odorValue)}</td>
                   <td className={isEmptyUjiAirValue(test.tdsValue) ? 'uji-empty-cell' : undefined}>{formatWaterValue(test.tdsValue)}</td>
                   <td className={isEmptyUjiAirValue(test.turbidityValue) ? 'uji-empty-cell' : undefined}>{formatWaterValue(test.turbidityValue)}</td>
+                  <td className={isEmptyUjiAirValue(test.colorValue) ? 'uji-empty-cell' : undefined}>{formatWaterValue(test.colorValue)}</td>
+                  <td className={isEmptyUjiAirValue(test.odorValue) ? 'uji-empty-cell' : undefined}>{formatWaterValue(test.odorValue)}</td>
                   <td className={isEmptyUjiAirValue(test.phValue) ? 'uji-empty-cell' : undefined}>{formatWaterValue(test.phValue)}</td>
-                  <td className={isEmptyUjiAirValue(test.nitriteValue) ? 'uji-empty-cell' : undefined}>{formatWaterValue(test.nitriteValue)}</td>
                   <td className={isEmptyUjiAirValue(test.nitrateValue) ? 'uji-empty-cell' : undefined}>{formatWaterValue(test.nitrateValue)}</td>
+                  <td className={isEmptyUjiAirValue(test.nitriteValue) ? 'uji-empty-cell' : undefined}>{formatWaterValue(test.nitriteValue)}</td>
                   <td className={isEmptyUjiAirValue(test.chromiumValue) ? 'uji-empty-cell' : undefined}>{formatWaterValue(test.chromiumValue)}</td>
                   <td className={isEmptyUjiAirValue(test.ironValue) ? 'uji-empty-cell' : undefined}>{formatWaterValue(test.ironValue)}</td>
                   <td className={isEmptyUjiAirValue(test.manganeseValue) ? 'uji-empty-cell' : undefined}>{formatWaterValue(test.manganeseValue)}</td>
@@ -3188,13 +4396,7 @@ function UjiUdaraPage({ profile, locations, kelurahan, airTests, setAirTests }: 
   const [error, setError] = useState('')
   // State untuk filter lokasi
   const [filterKelurahanId, setFilterKelurahanId] = useState('')
-  const [filterLocationId, setFilterLocationId] = useState('')
-  
-  // Filter lokasi berdasarkan kelurahan yang dipilih
-  const filteredLocations = locations.filter(loc => {
-    if (!filterKelurahanId) return true
-    return loc.kelurahanId === filterKelurahanId
-  })
+  const [searchQuery, setSearchQuery] = useState('')
   
   // Filter tests berdasarkan filter yang dipilih
   const filteredTests = tests.filter(test => {
@@ -3202,7 +4404,11 @@ function UjiUdaraPage({ profile, locations, kelurahan, airTests, setAirTests }: 
       const location = locations.find(loc => loc.id === test.locationId)
       if (location?.kelurahanId !== filterKelurahanId) return false
     }
-    if (filterLocationId && test.locationId !== filterLocationId) return false
+    if (searchQuery.trim()) {
+      const query = searchQuery.toLowerCase()
+      const info = getLocationInfo(test.locationId)
+      if (!info.name.toLowerCase().includes(query) && !info.kelurahanName.toLowerCase().includes(query) && !test.testDate.toLowerCase().includes(query)) return false
+    }
     return true
   })
 
@@ -3237,8 +4443,9 @@ function UjiUdaraPage({ profile, locations, kelurahan, airTests, setAirTests }: 
       return
     }
     const header = [
-      'Lokasi',
+      'No',
       'Tanggal Uji',
+      'Lokasi',
       'Suhu 1/2/3',
       'Kelembapan 1/2/3',
       'Kebisingan 1/2/3',
@@ -3247,12 +4454,13 @@ function UjiUdaraPage({ profile, locations, kelurahan, airTests, setAirTests }: 
       'PM 10 1/2/3',
       'Ventilasi 1/2/3',
     ]
-    const rows = filteredTests.map((test) => {
+    const rows = filteredTests.map((test, index) => {
       const info = getLocationInfo(test.locationId)
       const lokasiCell = info.kelurahanName ? `${info.name}\n${info.kelurahanName}` : info.name
       return [
-        lokasiCell,
+        index + 1,
         test.testDate,
+        lokasiCell,
         `${test.temperature1 || 0}/${test.temperature2 || 0}/${test.temperature3 || 0}`,
         `${test.humidity1 || 0}/${test.humidity2 || 0}/${test.humidity3 || 0}`,
         `${test.noise1 || 0}/${test.noise2 || 0}/${test.noise3 || 0}`,
@@ -3288,7 +4496,9 @@ function UjiUdaraPage({ profile, locations, kelurahan, airTests, setAirTests }: 
     setLoading(true)
     try {
       console.log('Loading air quality tests for officer:', profile.id)
-      const { data, error: loadError } = await supabase.from('air_quality_tests').select('*').eq('officer_id', profile.id).order('test_date', { ascending: false })
+      let airQuery = supabase.from('air_quality_tests').select('*')
+      if (profile.role === 'kader') airQuery = airQuery.eq('officer_id', profile.id)
+      const { data, error: loadError } = await airQuery.order('test_date', { ascending: false })
       console.log('Load air quality tests result:', { data, error: loadError?.message, dataLength: data?.length })
       
       if (loadError) {
@@ -3315,12 +4525,14 @@ function UjiUdaraPage({ profile, locations, kelurahan, airTests, setAirTests }: 
     }
   }
 
-  // Only load tests after both profile and locations are available
+  // Load tests when profile is available (locations not required for fetching by officer_id)
   useEffect(() => {
-    if (profile && locations.length > 0) {
+    if (profile) {
       void loadTests()
+    } else {
+      setLoading(false)
     }
-  }, [profile, locations, kelurahan])
+  }, [profile])
 
   function openForm(test?: AirQualityTest) {
     setEditing(test ?? null)
@@ -3578,35 +4790,30 @@ function UjiUdaraPage({ profile, locations, kelurahan, airTests, setAirTests }: 
 
     {!formOpen && tests.length > 0 && (
       <>
-        {/* Filter Lokasi */}
+        {/* Filter Lokasi & Pencarian */}
         <div className="form-section" style={{ padding: '16px', marginBottom: '20px' }}>
           <div className="form-grid" style={{ gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px', margin: 0 }}>
             <label>Filter Kelurahan
               <select 
                 value={filterKelurahanId} 
-                onChange={(e) => { 
-                  setFilterKelurahanId(e.target.value)
-                  setFilterLocationId('') // Reset lokasi saat kelurahan berubah
-                }}
+                onChange={(e) => setFilterKelurahanId(e.target.value)}
               >
                 <option value="">Semua Kelurahan</option>
                 {kelurahan.map(k => <option key={k.id} value={k.id}>{k.name}</option>)}
               </select>
             </label>
-            <label>Filter Lokasi
-              <select 
-                value={filterLocationId} 
-                onChange={(e) => setFilterLocationId(e.target.value)}
-                disabled={!filterKelurahanId && filteredLocations.length === locations.length}
-              >
-                <option value="">Semua Lokasi</option>
-                {filteredLocations.map(loc => <option key={loc.id} value={loc.id}>{loc.name}</option>)}
-              </select>
+            <label>Pencarian
+              <input 
+                type="text" 
+                value={searchQuery} 
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Cari lokasi, kelurahan, atau tanggal..." 
+              />
             </label>
             <div style={{ display: 'flex', alignItems: 'flex-end' }}>
               <button 
                 className="secondary" 
-                onClick={() => { setFilterKelurahanId(''); setFilterLocationId('') }}
+                onClick={() => { setFilterKelurahanId(''); setSearchQuery('') }}
                 style={{ width: '100%' }}
               >
                 Reset Filter
@@ -3618,8 +4825,9 @@ function UjiUdaraPage({ profile, locations, kelurahan, airTests, setAirTests }: 
           <table className="data-table uji-air-table">
           <thead>
             <tr>
-              <th>Lokasi</th>
+              <th style={{ width: '50px' }}>No</th>
               <th>Tanggal Uji</th>
+              <th>Lokasi</th>
               <th>Suhu 1/2/3</th>
               <th>Kelembapan 1/2/3</th>
               <th>Kebisingan 1/2/3</th>
@@ -3631,19 +4839,20 @@ function UjiUdaraPage({ profile, locations, kelurahan, airTests, setAirTests }: 
             </tr>
           </thead>
           <tbody>
-            {filteredTests.map(test => {
+            {filteredTests.map((test, index) => {
               const locationInfo = getLocationInfo(test.locationId)
               return (
               <tr key={test.id}>
-                <td><strong>{locationInfo.name}</strong>{locationInfo.kelurahanName && <> <br /><small>{locationInfo.kelurahanName}</small></>}</td>
+                <td style={{ textAlign: 'center', fontWeight: '600' }}>{index + 1}</td>
                 <td>{test.testDate}</td>
-                <td>{test.temperature1 || 0}/{test.temperature2 || 0}/{test.temperature3 || 0}</td>
-                <td>{test.humidity1 || 0}/{test.humidity2 || 0}/{test.humidity3 || 0}</td>
-                <td>{test.noise1 || 0}/{test.noise2 || 0}/{test.noise3 || 0}</td>
-                <td>{test.lighting1 || 0}/{test.lighting2 || 0}/{test.lighting3 || 0}</td>
-                <td>{test.pm25_1 || 0}/{test.pm25_2 || 0}/{test.pm25_3 || 0}</td>
-                <td>{test.pm10_1 || 0}/{test.pm10_2 || 0}/{test.pm10_3 || 0}</td>
-                <td>{test.ventilationRate1 || 0}/{test.ventilationRate2 || 0}/{test.ventilationRate3 || 0}</td>
+                <td><strong>{locationInfo.name}</strong>{locationInfo.kelurahanName && <> <br /><small>{locationInfo.kelurahanName}</small></>}</td>
+                <td className={hasEmptyUjiUdaraValues([test.temperature1, test.temperature2, test.temperature3]) ? 'uji-udara-empty-cell' : undefined}>{formatUjiUdaraValues([test.temperature1, test.temperature2, test.temperature3])}</td>
+                <td className={hasEmptyUjiUdaraValues([test.humidity1, test.humidity2, test.humidity3]) ? 'uji-udara-empty-cell' : undefined}>{formatUjiUdaraValues([test.humidity1, test.humidity2, test.humidity3])}</td>
+                <td className={hasEmptyUjiUdaraValues([test.noise1, test.noise2, test.noise3]) ? 'uji-udara-empty-cell' : undefined}>{formatUjiUdaraValues([test.noise1, test.noise2, test.noise3])}</td>
+                <td className={hasEmptyUjiUdaraValues([test.lighting1, test.lighting2, test.lighting3]) ? 'uji-udara-empty-cell' : undefined}>{formatUjiUdaraValues([test.lighting1, test.lighting2, test.lighting3])}</td>
+                <td className={hasEmptyUjiUdaraValues([test.pm25_1, test.pm25_2, test.pm25_3]) ? 'uji-udara-empty-cell' : undefined}>{formatUjiUdaraValues([test.pm25_1, test.pm25_2, test.pm25_3])}</td>
+                <td className={hasEmptyUjiUdaraValues([test.pm10_1, test.pm10_2, test.pm10_3]) ? 'uji-udara-empty-cell' : undefined}>{formatUjiUdaraValues([test.pm10_1, test.pm10_2, test.pm10_3])}</td>
+                <td className={hasEmptyUjiUdaraValues([test.ventilationRate1, test.ventilationRate2, test.ventilationRate3]) ? 'uji-udara-empty-cell' : undefined}>{formatUjiUdaraValues([test.ventilationRate1, test.ventilationRate2, test.ventilationRate3])}</td>
                 <td>
                   <div className="entry-actions">
                     <button className="text-button" onClick={() => openForm(test)} type="button">Edit</button>
@@ -3663,6 +4872,7 @@ function UjiUdaraPage({ profile, locations, kelurahan, airTests, setAirTests }: 
 function LoginPage() {
   const [error, setError] = useState('')
   const [submitting, setSubmitting] = useState(false)
+  const [showPassword, setShowPassword] = useState(false)
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -3695,12 +4905,47 @@ function LoginPage() {
       zIndex: 0
     }}></div>
     <form className="auth-card" onSubmit={submit} style={{ position: 'relative', zIndex: 1 }}>
-      <div className="brand-mark large">S</div>
-      <h1>SIGESIT</h1>
+      <img className="brand-logo large" src="/Aset/logo-sigesit-mark.png" alt="Logo SIGESIT Sadakeling" />
+      <h1>SIGESIT<span className="brand-sub">SADAKELING</span></h1>
       <p>Masuk untuk mengelola pendataan SADAKELING PKM PADASUKA - KOTA CIMAHI.</p>
       {error && <div className="auth-error">{error}</div>}
       <label>Email<input autoComplete="username" name="email" required type="email" /></label>
-      <label>Kata sandi<input autoComplete="current-password" name="password" required type="password" /></label>
+      <label>
+        Kata sandi
+        <div style={{ position: 'relative' }}>
+          <input 
+            autoComplete="current-password" 
+            name="password" 
+            required 
+            type={showPassword ? 'text' : 'password'} 
+            style={{ paddingRight: '45px' }}
+          />
+          <button
+            type="button"
+            onClick={() => setShowPassword(!showPassword)}
+            style={{
+              position: 'absolute',
+              right: '10px',
+              top: '50%',
+              transform: 'translateY(-50%)',
+              background: 'none',
+              border: 'none',
+              cursor: 'pointer',
+              padding: '4px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center'
+            }}
+            aria-label={showPassword ? 'Sembunyikan kata sandi' : 'Tampilkan kata sandi'}
+          >
+            {showPassword ? (
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="19" x2="12" y2="5"></line><path d="M1 12s9-7 17-7 6 5 6 7-6 7-6 7"></path><line x1="1" y1="1" x2="23" y2="23"></line></svg>
+            ) : (
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M1 12s9-7 17-7 6 5 6 7-6 7-6 7"></path><circle cx="12" cy="12" r="3"></circle></svg>
+            )}
+          </button>
+        </div>
+      </label>
       <button className="primary" disabled={submitting} type="submit">{submitting ? 'Memproses…' : 'Masuk'}</button>
     </form>
   </main>
@@ -3715,8 +4960,11 @@ function PenggunaPage({ kelurahan, rw, rt, currentUserId }: { kelurahan: Region[
   const [submitting, setSubmitting] = useState(false)
   const [selectedKelurahanId, setSelectedKelurahanId] = useState('')
   const [selectedRwId, setSelectedRwId] = useState('')
-  const [moduleAccess, setModuleAccess] = useState({ entry: true, wilayah: true, pengguna: false, lokasi: true, uji_air: true, uji_udara: true })
-  const [generatedPasswords, setGeneratedPasswords] = useState<Record<string, string>>({})
+  const [role, setRole] = useState<UserRole>('kader')
+  const [moduleAccess, setModuleAccess] = useState<ModuleAccess>(getDefaultModuleAccess('kader'))
+  const [usernameDraft, setUsernameDraft] = useState('')
+  const [filterKelurahanId, setFilterKelurahanId] = useState('')
+  const [searchTerm, setSearchTerm] = useState('')
 
   async function loadUsers() {
     if (!supabase) {
@@ -3766,14 +5014,37 @@ function PenggunaPage({ kelurahan, rw, rt, currentUserId }: { kelurahan: Region[
     return last5Digits + uniqueLetters
   }
 
+  // Must satisfy the backend password policy (upper, lower, digit, symbol), so guarantee
+  // one character from each category before filling and shuffling the remainder.
   function generatePassword(): string {
-    const length = 12
-    const charset = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*'
-    let password = ''
-    for (let i = 0; i < length; i++) {
-      password += charset.charAt(Math.floor(Math.random() * charset.length))
+    const upper = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+    const lower = 'abcdefghijklmnopqrstuvwxyz'
+    const numbers = '0123456789'
+    const symbols = '!@#$%^&*'
+    const all = upper + lower + numbers + symbols
+    const pick = (set: string) => set.charAt(Math.floor(Math.random() * set.length))
+    const chars = [pick(upper), pick(lower), pick(numbers), pick(symbols)]
+    while (chars.length < 12) chars.push(pick(all))
+    for (let i = chars.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1))
+      const tmp = chars[i]
+      chars[i] = chars[j]
+      chars[j] = tmp
     }
-    return password
+    return chars.join('')
+  }
+
+  // Module access is fully derived from role: super_admin = all, kader = entry only,
+  // admin = the modules toggled in the form (pengguna is never grantable to admin).
+  function resolveModuleAccess(nextRole: UserRole, current: ModuleAccess): ModuleAccess {
+    if (nextRole === 'super_admin') return getDefaultModuleAccess('super_admin')
+    if (nextRole === 'kader') return getDefaultModuleAccess('kader')
+    return { ...current, pengguna: false }
+  }
+
+  function changeRole(nextRole: UserRole) {
+    setRole(nextRole)
+    setModuleAccess((prev) => resolveModuleAccess(nextRole, prev))
   }
 
   function openForm(user?: UserProfile) {
@@ -3781,7 +5052,10 @@ function PenggunaPage({ kelurahan, rw, rt, currentUserId }: { kelurahan: Region[
     setError('')
     setSelectedKelurahanId(user?.kelurahanId ?? '')
     setSelectedRwId(user?.rwId ?? '')
-    setModuleAccess(user?.moduleAccess || { entry: true, wilayah: true, pengguna: false, lokasi: true, uji_air: true, uji_udara: true })
+    const nextRole = user?.role ?? 'kader'
+    setRole(nextRole)
+    setModuleAccess(user ? resolveModuleAccess(nextRole, user.moduleAccess) : getDefaultModuleAccess(nextRole))
+    setUsernameDraft(user?.username ?? '')
     setFormOpen(true)
   }
 
@@ -3793,22 +5067,37 @@ function PenggunaPage({ kelurahan, rw, rt, currentUserId }: { kelurahan: Region[
     
     // NIK uniqueness validation
     if (!editing && nik) {
-      const { data: existingUser } = await supabase.from('profiles').select('id').eq('nik', nik).single()
+      const { data: existingUser, error: nikLookupError } = await supabase.from('profiles').select('id').eq('nik', nik).maybeSingle()
+      if (nikLookupError) {
+        setError(isUnauthenticated(nikLookupError.message, null) ? SESSION_HELP : `Gagal memeriksa NIK: ${nikLookupError.message}`)
+        return
+      }
       if (existingUser) {
         setError('NIK sudah terdaftar. Gunakan NIK yang berbeda.')
         return
       }
     }
-    
-    let username = editing?.username
-    let password = String(data.get('password') ?? '').trim()
-    
-    // Auto-generate username and password for new users
-    if (!editing) {
-      username = generateUsername(nik)
-      password = generatePassword()
+
+    const username = editing ? usernameDraft.trim() : generateUsername(nik)
+    if (!username) { setError('Username wajib diisi.'); return }
+
+    // Username uniqueness validation when it is changed on edit
+    if (editing && username !== editing.username) {
+      const { data: duplicateUsername, error: usernameLookupError } = await supabase.from('profiles').select('id').eq('username', username).neq('id', editing.id).maybeSingle()
+      if (usernameLookupError) {
+        setError(isUnauthenticated(usernameLookupError.message, null) ? SESSION_HELP : `Gagal memeriksa username: ${usernameLookupError.message}`)
+        return
+      }
+      if (duplicateUsername) {
+        setError('Username sudah digunakan pengguna lain. Gunakan username yang berbeda.')
+        return
+      }
     }
-    
+
+    // On edit the password is optional (blank = keep current); on create it is auto-generated.
+    let password = String(data.get('password') ?? '').trim()
+    if (!editing) password = generatePassword()
+
     const payload = {
       action: editing ? 'update' : 'create',
       id: editing?.id,
@@ -3818,19 +5107,18 @@ function PenggunaPage({ kelurahan, rw, rt, currentUserId }: { kelurahan: Region[
       username: username,
       nik: nik,
       phone: String(data.get('phone') ?? '').trim(),
-      role: 'kader',
+      role: role,
       kelurahanId: String(data.get('kelurahanId') ?? '') || undefined,
       rwId: String(data.get('rwId') ?? '') || undefined,
       rtId: String(data.get('rtId') ?? '') || undefined,
       isActive: data.get('isActive') === 'on',
-      moduleAccess: moduleAccess,
+      moduleAccess: resolveModuleAccess(role, moduleAccess),
     }
-    
-    if (!editing && !payload.password) { setError('Kata sandi wajib diisi untuk akun baru.'); return }
+
     setSubmitting(true)
     setError('')
     console.log('Sending payload to Edge Function:', payload)
-    const { data: result, error: invokeError } = await supabase.functions.invoke('admin-users', { body: payload })
+    const { data: result, error: invokeError } = await invokeAdminUsers(payload)
     console.log('Edge Function response:', { result, invokeError: JSON.stringify(invokeError) })
     setSubmitting(false)
     const resultError = (result as { error?: string } | null)?.error
@@ -3841,10 +5129,14 @@ function PenggunaPage({ kelurahan, rw, rt, currentUserId }: { kelurahan: Region[
       // Store generated password for display in list
       const { data: newUser } = await supabase.from('profiles').select('id').eq('username', username).single()
       if (newUser) {
-        setGeneratedPasswords(prev => ({ ...prev, [newUser.id]: password }))
+        await supabase.from('profiles').update({ last_password: password }).eq('id', newUser.id)
       }
       // Show generated credentials
       alert(`User berhasil dibuat!\n\nUsername: ${username}\nPassword: ${password}\n\nSimpan credentials ini untuk user.`)
+    }
+
+    if (editing && password) {
+      await supabase.from('profiles').update({ last_password: password }).eq('id', editing.id)
     }
     
     setFormOpen(false)
@@ -3854,7 +5146,7 @@ function PenggunaPage({ kelurahan, rw, rt, currentUserId }: { kelurahan: Region[
 
   async function toggleActive(user: UserProfile) {
     if (!supabase) return
-    const { error: invokeError } = await supabase.functions.invoke('admin-users', { body: { action: 'update', id: user.id, isActive: !user.isActive } })
+    const { error: invokeError } = await invokeAdminUsers({ action: 'update', id: user.id, isActive: !user.isActive })
     if (invokeError) { window.alert(await getFunctionErrorMessage(invokeError) ?? 'Gagal memperbarui status pengguna.'); return }
     void loadUsers()
   }
@@ -3863,7 +5155,7 @@ function PenggunaPage({ kelurahan, rw, rt, currentUserId }: { kelurahan: Region[
     if (!supabase) return
     if (user.id === currentUserId) { window.alert('Tidak dapat menghapus akun sendiri.'); return }
     if (!window.confirm(`Hapus pengguna ${user.fullName}?`)) return
-    const { error: invokeError } = await supabase.functions.invoke('admin-users', { body: { action: 'delete', id: user.id } })
+    const { error: invokeError } = await invokeAdminUsers({ action: 'delete', id: user.id })
     if (invokeError) { window.alert(await getFunctionErrorMessage(invokeError) ?? 'Gagal menghapus pengguna.'); return }
     void loadUsers()
   }
@@ -3873,22 +5165,48 @@ function PenggunaPage({ kelurahan, rw, rt, currentUserId }: { kelurahan: Region[
     if (!window.confirm(`Generate password baru untuk ${user.fullName}? Password lama akan diganti.`)) return
     
     const newPassword = generatePassword()
-    const { error: invokeError } = await supabase.functions.invoke('admin-users', { 
-      body: { action: 'update', id: user.id, password: newPassword } 
-    })
+    const { error: invokeError } = await invokeAdminUsers({ action: 'update', id: user.id, password: newPassword })
     
     if (invokeError) { 
       window.alert(await getFunctionErrorMessage(invokeError) ?? 'Gagal generate password.'); 
       return 
     }
-    
-    // Store and show new password
-    setGeneratedPasswords(prev => ({ ...prev, [user.id]: newPassword }))
+
+    await supabase.from('profiles').update({ last_password: newPassword }).eq('id', user.id)
+    void loadUsers()
     alert(`Password baru berhasil digenerate!\n\nUsername: ${user.username}\nPassword: ${newPassword}\n\nSimpan credentials ini untuk user.`)
   }
 
   const rwOptions = rw.filter((item) => item.kelurahanId === selectedKelurahanId)
   const rtOptions = rt.filter((item) => item.rwId === selectedRwId)
+  const keyword = searchTerm.trim().toLowerCase()
+  const getKelurahanName = (kelurahanId?: string) => kelurahan.find((item) => item.id === kelurahanId)?.name ?? '-'
+  const getRwName = (rwId?: string) => rw.find((item) => item.id === rwId)?.name ?? '-'
+  const getRtName = (rtId?: string) => rt.find((item) => item.id === rtId)?.name ?? '-'
+  const filteredUsers = users.filter((user) => {
+    if (filterKelurahanId && user.kelurahanId !== filterKelurahanId) return false
+    if (!keyword) return true
+
+    const searchableText = [
+      user.fullName,
+      user.username,
+      user.nik,
+      user.phone,
+      user.email ?? '',
+      ROLE_LABELS[user.role],
+      getKelurahanName(user.kelurahanId),
+      `RW ${getRwName(user.rwId)}`,
+      `RT ${getRtName(user.rtId)}`,
+    ].join(' ').toLowerCase()
+
+    return searchableText.includes(keyword)
+  })
+  const roleHints: Record<UserRole, string> = {
+    super_admin: 'Full akses semua modul',
+    admin: 'Akses dipilih per modul',
+    kader: 'Hanya modul Entry Data',
+  }
+  const adminModules = MODULES.filter((m) => m.key !== 'pengguna')
 
   return <section className="master-page">
     <div className="page-heading">
@@ -3896,43 +5214,95 @@ function PenggunaPage({ kelurahan, rw, rt, currentUserId }: { kelurahan: Region[
       <button className="primary" onClick={() => openForm()} type="button">+ Tambah pengguna</button>
     </div>
     {formOpen && <form className="region-form" onSubmit={submit}>
-      <strong>{editing ? 'Edit' : 'Tambah'} pengguna kader/relawan</strong>
+      <strong>{editing ? 'Edit' : 'Tambah'} pengguna</strong>
       {error && <div className="auth-error">{error}</div>}
       <div className="region-form-fields">
         <label>Nama lengkap<input defaultValue={editing?.fullName} name="fullName" required /></label>
         <label>NIK (16 digit)<input defaultValue={editing?.nik} maxLength={16} minLength={16} name="nik" required type="text" /></label>
         <label>No. HP<input defaultValue={editing?.phone} name="phone" required type="tel" /></label>
+        {editing && <label>Username<input name="username" onChange={(event) => setUsernameDraft(event.target.value)} required value={usernameDraft} /></label>}
+        {editing && <label>Password baru (opsional)<input autoComplete="new-password" minLength={8} name="password" placeholder="Kosongkan jika tidak ingin mengganti" type="password" /></label>}
         <label>Kelurahan<select name="kelurahanId" onChange={(event) => { setSelectedKelurahanId(event.target.value); setSelectedRwId('') }} value={selectedKelurahanId} required><option value="">Pilih kelurahan</option>{kelurahan.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
         <label>RW<select disabled={!selectedKelurahanId} name="rwId" onChange={(event) => setSelectedRwId(event.target.value)} value={selectedRwId} required><option value="">Pilih RW</option>{rwOptions.map((item) => <option key={item.id} value={item.id}>RW {item.name}</option>)}</select></label>
         <label>RT<select defaultValue={editing?.rtId ?? ''} disabled={!selectedRwId} name="rtId" required><option value="">Pilih RT</option>{rtOptions.map((item) => <option key={item.id} value={item.id}>RT {item.name}</option>)}</select></label>
         <label>Status<select defaultValue={editing?.isActive === false ? 'off' : 'on'} name="isActive"><option value="on">Aktif</option><option value="off">Nonaktif</option></select></label>
-        {!editing && <div className="module-access">
-          <label className="checkbox-label"><input checked={moduleAccess.entry} onChange={(e) => setModuleAccess({...moduleAccess, entry: e.target.checked})} type="checkbox" /> Akses modul Entry</label>
-          <label className="checkbox-label"><input checked={moduleAccess.wilayah} onChange={(e) => setModuleAccess({...moduleAccess, wilayah: e.target.checked})} type="checkbox" /> Akses modul Wilayah</label>
-          <label className="checkbox-label"><input checked={moduleAccess.pengguna} onChange={(e) => setModuleAccess({...moduleAccess, pengguna: e.target.checked})} type="checkbox" /> Akses modul Pengguna</label>
-          <label className="checkbox-label"><input checked={moduleAccess.lokasi} onChange={(e) => setModuleAccess({...moduleAccess, lokasi: e.target.checked})} type="checkbox" /> Akses modul Lokasi</label>
-          <label className="checkbox-label"><input checked={moduleAccess.uji_air} onChange={(e) => setModuleAccess({...moduleAccess, uji_air: e.target.checked})} type="checkbox" /> Akses modul Uji Air</label>
-          <label className="checkbox-label"><input checked={moduleAccess.uji_udara} onChange={(e) => setModuleAccess({...moduleAccess, uji_udara: e.target.checked})} type="checkbox" /> Akses modul Uji Udara</label>
-        </div>}
-        {!editing && <div className="generated-info">
+        <div className="role-field wide">
+          <span className="field-title">Level akses pengguna</span>
+          <div className="role-picker">
+            {(['super_admin', 'admin', 'kader'] as UserRole[]).map((r) => (
+              <button className={role === r ? 'role-option active' : 'role-option'} key={r} onClick={() => changeRole(r)} type="button">
+                <strong>{ROLE_LABELS[r]}</strong>
+                <small>{roleHints[r]}</small>
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="module-access wide">
+          <span className="field-title">Akses modul</span>
+          {role === 'super_admin' && <p className="access-note">Super Admin mendapat <strong>full akses</strong> ke semua modul dan fitur tanpa batasan.</p>}
+          {role === 'kader' && <p className="access-note">Kader hanya dapat mengakses modul <strong>Entry Data</strong> dan hanya melihat data milik sendiri.</p>}
+          {role === 'admin' && <div className="module-grid">
+            {adminModules.map((m) => (
+              <label className="checkbox-label" key={m.key}>
+                <input checked={moduleAccess[m.key]} onChange={(e) => setModuleAccess({ ...moduleAccess, [m.key]: e.target.checked } as ModuleAccess)} type="checkbox" />
+                <span>{m.icon} {m.label}</span>
+              </label>
+            ))}
+          </div>}
+        </div>
+        {!editing && <div className="generated-info wide">
           <p><strong>Username:</strong> Akan digenerate otomatis (5 digit terakhir NIK + 3 huruf unik)</p>
-          <p><strong>Password:</strong> Akan digenerate otomatis (12 karakter) dan akan ditampilkan di daftar pengguna setelah user dibuat</p>
+          <p><strong>Password:</strong> Akan digenerate otomatis (12 karakter) dan ditampilkan setelah pengguna dibuat</p>
+        </div>}
+        {editing && <div className="generated-info wide">
+          <p><strong>Email:</strong> otomatis mengikuti username → <strong>{usernameDraft.trim() || '…'}@sigesit.local</strong></p>
+          <p><strong>Password:</strong> isi hanya jika ingin mengganti password; kosongkan untuk mempertahankan password lama.</p>
         </div>}
       </div>
       <div className="form-actions"><button className="secondary" onClick={() => setFormOpen(false)} type="button">Kembali</button><button className="primary" disabled={submitting} type="submit">{submitting ? 'Menyimpan…' : 'Simpan'}</button></div>
     </form>}
+    <div className="user-toolbar">
+      <label>
+        <span>Filter Kelurahan</span>
+        <select onChange={(event) => setFilterKelurahanId(event.target.value)} value={filterKelurahanId}>
+          <option value="">Semua kelurahan</option>
+          {kelurahan.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+        </select>
+      </label>
+      <label>
+        <span>Pencarian bebas</span>
+        <input
+          onChange={(event) => setSearchTerm(event.target.value)}
+          placeholder="Cari nama, username, NIK, HP, email, RW, RT..."
+          type="search"
+          value={searchTerm}
+        />
+      </label>
+    </div>
+    <p className="user-toolbar-summary">Menampilkan {filteredUsers.length} dari {users.length} pengguna</p>
     <div className="region-list">
       {error && <div className="error-message" style={{ marginBottom: '16px' }}>{error}</div>}
-      {loading ? <div className="empty-state"><span>♙</span><h2>Memuat data pengguna…</h2></div> : users.length === 0 ? <div className="empty-state"><span>♙</span><h2>Belum ada pengguna</h2><p>Tambahkan akun kader atau admin untuk mulai mengelola akses.</p></div> : users.map((user) => <article className="region-row" key={user.id}>
-        <div>
-          <strong>{user.fullName}</strong>
+      {loading ? <div className="empty-state"><span>♙</span><h2>Memuat data pengguna…</h2></div> : users.length === 0 ? <div className="empty-state"><span>♙</span><h2>Belum ada pengguna</h2><p>Tambahkan akun kader atau admin untuk mulai mengelola akses.</p></div> : filteredUsers.length === 0 ? <div className="empty-state"><span>⌕</span><h2>Pengguna tidak ditemukan</h2><p>Ubah filter kelurahan atau kata kunci pencarian.</p></div> : filteredUsers.map((user) => <article className="region-row user-row" key={user.id}>
+        <div className="user-main">
+          <div className="user-title">
+            <strong>{user.fullName}</strong>
+            <span className={`role-badge role-${user.role}`}>{ROLE_LABELS[user.role]}</span>
+            {!user.isActive && <span className="role-badge inactive">Nonaktif</span>}
+          </div>
           <small>
-            Username: {user.username} · 
-            {generatedPasswords[user.id] && ` Password: ${generatedPasswords[user.id]} · `}
-            {user.email} · 
-            {user.role === 'super_admin' ? 'Super Admin' : 'Kader'}
-            {!user.isActive && ' · Nonaktif'}
+            Username: {user.username}
+            {` · No. Telp: ${user.phone || '-'}`}
+            {` · Password: ${user.lastPassword || 'tidak tercatat'}`}
+            {user.email && ` · ${user.email}`}
           </small>
+          <small className="user-region">
+            Kelurahan: {getKelurahanName(user.kelurahanId)} · RW {getRwName(user.rwId)} · RT {getRtName(user.rtId)}
+          </small>
+          <div className="module-badges">
+            {user.role === 'super_admin'
+              ? <span className="module-badge full">Full akses semua modul</span>
+              : MODULES.filter((m) => user.moduleAccess[m.key]).map((m) => <span className="module-badge" key={m.key}>{m.icon} {m.label}</span>)}
+          </div>
         </div>
         <div className="row-actions">
           <button className="edit-button" onClick={() => openForm(user)} type="button">Edit</button>
@@ -4015,10 +5385,11 @@ function PanganPage({ profile, kelurahan, rw, rt, foodInspections, setFoodInspec
     if (!supabase || !profile) { setLoading(false); return }
     setLoading(true)
     try {
-      const { data, error: loadError } = await supabase
+      let foodQuery = supabase
         .from('food_inspection_results')
         .select('*')
-        .eq('officer_id', profile.id)
+      if (profile.role === 'kader') foodQuery = foodQuery.eq('officer_id', profile.id)
+      const { data, error: loadError } = await foodQuery
         .order('entry_date', { ascending: false })
       if (loadError) {
         setError(`Gagal memuat data hasil pemeriksaan: ${loadError.message}`)
@@ -4313,7 +5684,7 @@ function PanganPage({ profile, kelurahan, rw, rt, foodInspections, setFoodInspec
           <table className="data-table">
             <thead>
               <tr>
-                <th>No</th><th>Tanggal</th><th>Jenis TPP</th><th>Lokasi</th><th>Penanggung Jawab</th><th>Hasil IKL</th><th>Sampel</th><th>Status</th><th>Aksi</th>
+                <th>No</th><th>Tanggal</th><th>Jenis TPP</th><th>Lokasi</th><th>Penanggung Jawab</th><th>Hasil IKL</th><th>Sampel & Hasil</th><th>Status</th><th>Aksi</th>
               </tr>
             </thead>
             <tbody>
@@ -4323,16 +5694,36 @@ function PanganPage({ profile, kelurahan, rw, rt, foodInspections, setFoodInspec
                 const rtName = item.rtId ? rt.find((r) => r.id === item.rtId)?.name : undefined
                 const tppName = item.jenisTppId ? groupTppList.find((g) => g.id === item.jenisTppId)?.name : undefined
                 const lokasiCell = [kelName, rwName, rtName].filter(Boolean).join(' / ') || '-'
-                const foodNames = item.samples.map((s) => s.nama_makanan).filter(Boolean).join(', ') || '-'
+                const foodSamples = item.samples.length === 0 ? (
+                  <span className="food-sample-empty">Tidak ada sampel</span>
+                ) : (
+                  <div className="food-sample-list">
+                    {item.samples.map((sample, sampleIndex) => (
+                      <div className="food-sample-item" key={`${item.id}-sample-${sampleIndex}`}>
+                        <div className="food-sample-name">
+                          <strong>{sampleIndex + 1}. {sample.nama_makanan || 'Tanpa nama'}</strong>
+                        </div>
+                        <div className="food-sample-results">
+                          <span className={sample.boraks === 'Positif' ? 'food-sample-result positive' : sample.boraks === 'Negatif' ? 'food-sample-result negative' : 'food-sample-result'}>Boraks: {sample.boraks || '-'}</span>
+                          <span className={sample.formalin === 'Positif' ? 'food-sample-result positive' : sample.formalin === 'Negatif' ? 'food-sample-result negative' : 'food-sample-result'}>Formalin: {sample.formalin || '-'}</span>
+                          <span className={sample.rodaminB === 'Positif' ? 'food-sample-result positive' : sample.rodaminB === 'Negatif' ? 'food-sample-result negative' : 'food-sample-result'}>Rodamin B: {sample.rodaminB || '-'}</span>
+                          <span className={sample.metanilYellow === 'Positif' ? 'food-sample-result positive' : sample.metanilYellow === 'Negatif' ? 'food-sample-result negative' : 'food-sample-result'}>Metanil Yellow: {sample.metanilYellow || '-'}</span>
+                          <span className={sample.eColi === 'Positif' ? 'food-sample-result positive' : sample.eColi === 'Negatif' ? 'food-sample-result negative' : 'food-sample-result'}>E-coli: {sample.eColi || '-'}</span>
+                        </div>
+                        {sample.remarks && <div className="food-sample-remarks">Keterangan: {sample.remarks}</div>}
+                      </div>
+                    ))}
+                  </div>
+                )
                 return (
                   <tr key={item.id}>
-                    <td style={{ textAlign: 'center', fontWeight: '600' }}> {idx + 1}</td>
+                    <td style={{ textAlign: 'center', fontWeight: 600 }}> {idx + 1}</td>
                     <td>{item.entryDate}</td>
                     <td>{tppName || '-'}</td>
                     <td>{lokasiCell}</td>
                     <td>{item.penanggungJawab || '-'}</td>
                     <td>{item.hasilIkl || '-'}</td>
-                    <td>{foodNames}</td>
+                    <td>{foodSamples}</td>
                     <td><span style={{ color: item.overallStatus === 'Lulus' ? '#16a34a' : '#b91c1c', fontWeight: 600 }}>{item.overallStatus || '-'}</span></td>
                     <td>
                       <div className="entry-actions">
@@ -4349,6 +5740,755 @@ function PanganPage({ profile, kelurahan, rw, rt, foodInspections, setFoodInspec
       </>
     )}
   </section>
+}
+
+function GroupTppPage() {
+  const [groupTppList, setGroupTppList] = useState<GroupTpp[]>([])
+  const [loading, setLoading] = useState(true)
+  const [formOpen, setFormOpen] = useState(false)
+  const [editing, setEditing] = useState<GroupTpp | null>(null)
+  const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState('')
+  const [searchKeyword, setSearchKeyword] = useState('')
+
+  const [formData, setFormData] = useState({
+    name: '',
+  })
+
+  const filteredList = groupTppList.filter(item =>
+    item.name.toLowerCase().includes(searchKeyword.toLowerCase())
+  )
+
+  async function loadGroupTpp() {
+    if (!supabase) { setGroupTppList([]); setLoading(false); return }
+    setLoading(true)
+    try {
+      const { data, error: loadError } = await supabase.from('group_tpp').select('*').order('name')
+      if (loadError) {
+        console.error('Error loading group_tpp:', loadError.message)
+        setError(`Gagal memuat data: ${loadError.message}`)
+        setLoading(false)
+        return
+      }
+      if (data) {
+        setGroupTppList(data as GroupTpp[])
+      }
+    } catch (err) {
+      console.error('Unexpected error loading group_tpp:', err)
+      setError(`Terjadi kesalahan: ${err instanceof Error ? err.message : 'Unknown error'}`)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => { void loadGroupTpp() }, [])
+
+  function openForm(item?: GroupTpp) {
+    setEditing(item ?? null)
+    setFormData(item ? { name: item.name } : { name: '' })
+    setFormOpen(true)
+    setError('')
+  }
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    if (!supabase) return
+    setSubmitting(true)
+    setError('')
+
+    try {
+      if (editing) {
+        const { error } = await supabase
+          .from('group_tpp')
+          .update({ name: formData.name })
+          .eq('id', editing.id)
+        if (error) throw error
+      } else {
+        const { error } = await supabase
+          .from('group_tpp')
+          .insert({ name: formData.name })
+        if (error) throw error
+      }
+      setFormOpen(false)
+      setEditing(null)
+      setFormData({ name: '' })
+      await loadGroupTpp()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Gagal menyimpan data')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  async function remove(item: GroupTpp) {
+    if (!window.confirm(`Yakin ingin menghapus "${item.name}"?`)) return
+    if (!supabase) return
+    try {
+      const { error } = await supabase.from('group_tpp').delete().eq('id', item.id)
+      if (error) throw error
+      await loadGroupTpp()
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : 'Gagal menghapus data')
+    }
+  }
+
+  return (
+    <section className="module-page">
+      <header className="module-header">
+        <div>
+          <h2>Group / Jenis TPP</h2>
+          <p>Kelola data group atau jenis TPP.</p>
+        </div>
+        <button className="primary" onClick={() => openForm()} type="button">+ Tambah Group/Jenis</button>
+      </header>
+
+      {formOpen && (
+        <form className="form-card" onSubmit={handleSubmit}>
+          <h3>{editing ? 'Edit Group/Jenis TPP' : 'Tambah Group/Jenis TPP'}</h3>
+          {error && <div className="form-error">{error}</div>}
+          <label>
+            Nama Group/Jenis TPP
+            <input
+              value={formData.name}
+              onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+              required
+            />
+          </label>
+          <div className="form-actions">
+            <button className="secondary" onClick={() => setFormOpen(false)} type="button">Batal</button>
+            <button className="primary" disabled={submitting} type="submit">
+              {submitting ? 'Menyimpan...' : 'Simpan'}
+            </button>
+          </div>
+        </form>
+      )}
+
+      {!formOpen && groupTppList.length > 0 && (
+        <div className="form-section" style={{ padding: '16px', marginBottom: '20px' }}>
+          <div className="form-grid" style={{ gridTemplateColumns: 'repeat(2, 1fr)', gap: '16px', margin: 0 }}>
+            <label>Pencarian
+              <input type="text" value={searchKeyword} onChange={(e) => setSearchKeyword(e.target.value)} placeholder="Cari nama group/jenis..." />
+            </label>
+            <div style={{ display: 'flex', alignItems: 'flex-end' }}>
+              <button className="secondary" onClick={() => { setSearchKeyword('') }} style={{ width: '100%' }}>Reset Pencarian</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {loading ? (
+        <div className="loading-state">Memuat data...</div>
+      ) : filteredList.length === 0 ? (
+        <div className="empty-state">
+          <span>📋</span>
+          <h2>Belum ada data Group/Jenis TPP</h2>
+          <p>Klik tombol di atas untuk menambahkan data baru.</p>
+        </div>
+      ) : (
+        <div className="table-container">
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th style={{ textAlign: 'center', width: '50px' }}>#</th>
+                <th>Nama Group/Jenis TPP</th>
+                <th style={{ width: '150px' }}>Aksi</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredList.map((item, idx) => (
+                <tr key={item.id}>
+                  <td style={{ textAlign: 'center', fontWeight: 600 }}>{idx + 1}</td>
+                  <td>{item.name}</td>
+                  <td>
+                    <div className="entry-actions">
+                      <button className="text-button" onClick={() => openForm(item)} type="button">Edit</button>
+                      <button className="text-button" onClick={() => remove(item)} type="button">Hapus</button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  )
+}
+
+function SettingsPage() {
+  const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS)
+  const [submitting, setSubmitting] = useState(false)
+  const [success, setSuccess] = useState(false)
+
+  useEffect(() => {
+    setSettings(loadSettings())
+  }, [])
+
+  function handleSave() {
+    setSubmitting(true)
+    setSuccess(false)
+    saveSettings(settings)
+    // Apply settings immediately
+    const theme = getThemeById(settings.theme)
+    document.documentElement.style.setProperty('--forest', theme.colors.primary)
+    document.documentElement.style.setProperty('--teal', theme.colors.primaryLight)
+    document.documentElement.style.setProperty('--mint', theme.colors.primaryBg)
+    document.documentElement.style.setProperty('--ink', theme.colors.text)
+    document.documentElement.style.setProperty('--muted', theme.colors.textSecondary)
+    document.documentElement.style.setProperty('--line', theme.colors.border)
+    document.documentElement.style.setProperty('--paper', theme.colors.surface)
+    document.documentElement.style.fontFamily = settings.fontFamily
+    setSuccess(true)
+    setSubmitting(false)
+    setTimeout(() => setSuccess(false), 3000)
+  }
+
+  return (
+    <section className="module-page">
+      <header className="module-header">
+        <div>
+          <h2>Pengaturan</h2>
+          <p>Ubah tampilan, bahasa, dan preferensi aplikasi.</p>
+        </div>
+      </header>
+
+      <form className="form-card" onSubmit={(e) => { e.preventDefault(); handleSave() }}>
+        {success && <div className="form-success">Pengaturan berhasil disimpan!</div>}
+
+        <label>
+          Tema
+          <select
+            value={settings.theme}
+            onChange={(e) => setSettings({ ...settings, theme: e.target.value as ThemeId })}
+          >
+            {themes.map(theme => (
+              <option key={theme.id} value={theme.id}>{theme.name}</option>
+            ))}
+          </select>
+        </label>
+
+        <label>
+          Jenis Huruf
+          <select
+            value={settings.fontFamily}
+            onChange={(e) => setSettings({ ...settings, fontFamily: e.target.value })}
+          >
+            <option value="Inter">Inter</option>
+            <option value="Roboto">Roboto</option>
+            <option value="Open Sans">Open Sans</option>
+            <option value="Lato">Lato</option>
+            <option value="Poppins">Poppins</option>
+          </select>
+        </label>
+
+        <label>
+          Bahasa
+          <select
+            value={settings.language}
+            onChange={(e) => setSettings({ ...settings, language: e.target.value as Language })}
+          >
+            <option value="id">Bahasa Indonesia</option>
+            <option value="en">English</option>
+            <option value="su">Bahasa Sunda</option>
+          </select>
+        </label>
+
+        <div className="form-actions">
+          <button className="primary" disabled={submitting} type="submit">
+            {submitting ? 'Menyimpan...' : 'Simpan Pengaturan'}
+          </button>
+        </div>
+      </form>
+    </section>
+  )
+}
+
+const ABJ_SHEET_CSV_URL = 'https://docs.google.com/spreadsheets/d/1ZJb9b0UevSdfhxtfBOYOyZbWQs9Knj7P1BkTXL7Fn9g/export?format=csv&gid=857836883'
+
+type AbjReport = {
+  tanggal: string
+  dateMs: number
+  kelurahan: string
+  rw: string
+  diperiksa: number
+  positif: number
+  negatif: number
+  abj: number
+  pelapor: string
+  lokasiJentik: string
+  wa: string
+}
+
+type DateRange = [number | null, number | null]
+
+function dateRangeMs(start: string, end: string): DateRange {
+  return [
+    start ? new Date(`${start}T00:00:00`).getTime() : null,
+    end ? new Date(`${end}T00:00:00`).getTime() : null,
+  ]
+}
+
+function inDateRange(dateMs: number, range: DateRange): boolean {
+  const [startMs, endMs] = range
+  if (startMs !== null && dateMs < startMs) return false
+  if (endMs !== null && dateMs > endMs) return false
+  return true
+}
+
+function parseCsv(text: string): string[][] {
+  const rows: string[][] = []
+  let row: string[] = []
+  let field = ''
+  let inQuotes = false
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i]
+    if (inQuotes) {
+      if (c === '"') {
+        if (text[i + 1] === '"') { field += '"'; i++ } else { inQuotes = false }
+      } else {
+        field += c
+      }
+    } else if (c === '"') {
+      inQuotes = true
+    } else if (c === ',') {
+      row.push(field); field = ''
+    } else if (c === '\n') {
+      row.push(field); rows.push(row); row = []; field = ''
+    } else if (c !== '\r') {
+      field += c
+    }
+  }
+  if (field.length > 0 || row.length > 0) { row.push(field); rows.push(row) }
+  return rows
+}
+
+function parseAbjRows(rows: string[][]): AbjReport[] {
+  const reports: AbjReport[] = []
+  for (const row of rows.slice(1)) {
+    const tanggal = (row[1] ?? '').trim()
+    const kelurahan = (row[2] ?? '').trim()
+    if (!tanggal || !kelurahan) continue
+    const date = new Date(tanggal.replace(/-/g, ' '))
+    const valid = !Number.isNaN(date.getTime())
+    const dateMs = valid ? new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime() : 0
+    const diperiksa = Number(row[4]) || 0
+    const positif = Number(row[5]) || 0
+    const negatif = Number(row[6]) || 0
+    const abj = Number(row[8]) || (diperiksa > 0 ? (negatif / diperiksa) * 100 : 0)
+    reports.push({
+      tanggal: tanggal.replace(/-/g, ' '),
+      dateMs,
+      kelurahan: kelurahan.toUpperCase(),
+      rw: (row[3] ?? '').trim(),
+      diperiksa,
+      positif,
+      negatif,
+      abj,
+      pelapor: (row[9] ?? '').trim(),
+      lokasiJentik: (row[10] ?? '').trim(),
+      wa: (row[11] ?? '').trim(),
+    })
+  }
+  return reports
+}
+
+function LaporanPage() {
+  const [reports, setReports] = useState<AbjReport[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  const [filterKelurahan, setFilterKelurahan] = useState('')
+  const [filterStart, setFilterStart] = useState('')
+  const [filterEnd, setFilterEnd] = useState('')
+  const [searchQuery, setSearchQuery] = useState('')
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    setError('')
+    try {
+      const res = await fetch(ABJ_SHEET_CSV_URL)
+      if (!res.ok) throw new Error(`Google Sheet merespons HTTP ${res.status}`)
+      const text = await res.text()
+      setReports(parseAbjRows(parseCsv(text)))
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Gagal memuat data laporan.')
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => { void load() }, [load])
+
+  const kelurahanOptions = [...new Set(reports.map((r) => r.kelurahan))].sort((a, b) => a.localeCompare(b, 'id-ID'))
+
+  const filtered = reports.filter((r) => {
+    if (filterKelurahan && r.kelurahan !== filterKelurahan) return false
+    if (!inDateRange(r.dateMs, dateRangeMs(filterStart, filterEnd))) return false
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase()
+      if (!r.pelapor.toLowerCase().includes(q) && !r.rw.toLowerCase().includes(q) && !r.lokasiJentik.toLowerCase().includes(q)) return false
+    }
+    return true
+  })
+
+  const totalDiperiksa = filtered.reduce((sum, r) => sum + r.diperiksa, 0)
+  const totalPositif = filtered.reduce((sum, r) => sum + r.positif, 0)
+  const totalNegatif = filtered.reduce((sum, r) => sum + r.negatif, 0)
+  const abjOverall = totalDiperiksa > 0 ? (totalNegatif / totalDiperiksa) * 100 : 0
+
+  function exportExcel() {
+    if (filtered.length === 0) {
+      window.alert('Tidak ada data laporan untuk diexport.')
+      return
+    }
+    const header = ['Tanggal', 'Kelurahan', 'RW', 'Rumah Diperiksa', 'Positif Jentik', 'Negatif Jentik', 'ABJ (%)', 'Pelapor', 'Lokasi Ditemukan Jentik', 'No WhatsApp']
+    const rows = filtered.map((r) => [r.tanggal, r.kelurahan, r.rw, r.diperiksa, r.positif, r.negatif, Number(r.abj.toFixed(1)), r.pelapor, r.lokasiJentik, r.wa])
+    const today = new Date().toISOString().slice(0, 10)
+    exportToExcel({ fileName: `laporan_abj_${today}.xlsx`, sheetName: 'Laporan ABJ', header, rows })
+  }
+
+  return (
+    <section className="module-page">
+      <header className="module-header">
+        <div>
+          <h2>Laporan ABJ (Jentik)</h2>
+          <p>Rekap laporan pemeriksaan jentik berkader, terintegrasi dari Google Sheet.</p>
+        </div>
+        <button className="secondary" onClick={() => void load()} type="button">Muat Ulang</button>
+      </header>
+
+      {error && <div className="form-error" style={{ marginBottom: '16px' }}>{error}</div>}
+
+      <div className="stat-grid">
+        <article className="stat-card">
+          <span className="stat-icon teal">📊</span>
+          <div>
+            <p>Total Laporan</p>
+            <strong>{loading ? '…' : filtered.length}</strong>
+            <small>Baris laporan tersaring</small>
+          </div>
+        </article>
+        <article className="stat-card">
+          <span className="stat-icon green">🏠</span>
+          <div>
+            <p>Rumah Diperiksa</p>
+            <strong>{loading ? '…' : totalDiperiksa}</strong>
+            <small>Total rumah diperiksa</small>
+          </div>
+        </article>
+        <article className="stat-card">
+          <span className="stat-icon coral">🦟</span>
+          <div>
+            <p>Positif Jentik</p>
+            <strong>{loading ? '…' : totalPositif}</strong>
+            <small>Rumah ditemukan jentik</small>
+          </div>
+        </article>
+        <article className="stat-card">
+          <span className="stat-icon gold">%</span>
+          <div>
+            <p>ABJ Keseluruhan</p>
+            <strong>{loading ? '…' : `${abjOverall.toFixed(1)}%`}</strong>
+            <small>Negatif jentik / diperiksa</small>
+          </div>
+        </article>
+      </div>
+
+      <div className="form-section" style={{ padding: '16px', marginBottom: '20px' }}>
+        <div className="form-grid" style={{ gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px', margin: 0 }}>
+          <label>Filter Kelurahan
+            <select value={filterKelurahan} onChange={(e) => setFilterKelurahan(e.target.value)}>
+              <option value="">Semua Kelurahan</option>
+              {kelurahanOptions.map((k) => <option key={k} value={k}>{k}</option>)}
+            </select>
+          </label>
+          <label>Tanggal Mulai
+            <input type="date" value={filterStart} onChange={(e) => setFilterStart(e.target.value)} />
+          </label>
+          <label>Tanggal Akhir
+            <input type="date" value={filterEnd} onChange={(e) => setFilterEnd(e.target.value)} min={filterStart || undefined} />
+          </label>
+          <label>Pencarian
+            <input type="text" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder="Cari pelapor, RW, atau lokasi jentik..." />
+          </label>
+        </div>
+      </div>
+
+      {loading ? <div className="empty-state"><span>📊</span><h2>Memuat data laporan…</h2></div> : filtered.length === 0 ? <div className="empty-state"><span>📊</span><h2>Tidak ada data laporan</h2><p>Ubah filter atau muat ulang data dari Google Sheet.</p></div> : (
+        <div className="data-table-container">
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th style={{ width: '50px' }}>No</th>
+                <th>Tanggal</th>
+                <th>Kelurahan</th>
+                <th>RW</th>
+                <th>Rumah Diperiksa</th>
+                <th>Positif Jentik</th>
+                <th>Negatif Jentik</th>
+                <th>ABJ (%)</th>
+                <th>Pelapor</th>
+                <th>Lokasi Ditemukan Jentik</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((r, index) => (
+                <tr key={`${r.tanggal}-${r.pelapor}-${index}`}>
+                  <td style={{ textAlign: 'center', fontWeight: '600' }}>{index + 1}</td>
+                  <td>{r.tanggal}</td>
+                  <td>{r.kelurahan}</td>
+                  <td style={{ textAlign: 'center' }}>{r.rw}</td>
+                  <td style={{ textAlign: 'center' }}>{r.diperiksa}</td>
+                  <td style={{ textAlign: 'center' }}>{r.positif}</td>
+                  <td style={{ textAlign: 'center' }}>{r.negatif}</td>
+                  <td style={{ textAlign: 'center', fontWeight: '600' }}>{r.abj.toFixed(1)}</td>
+                  <td>{r.pelapor}</td>
+                  <td>{r.lokasiJentik || '-'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {!loading && filtered.length > 0 && (
+        <div className="form-actions" style={{ marginTop: '16px' }}>
+          <button className="primary" onClick={exportExcel} type="button">Export Excel</button>
+        </div>
+      )}
+    </section>
+  )
+}
+
+const DBD_SHEET_CSV_URL = 'https://docs.google.com/spreadsheets/d/1r3f7iJhjFaXHR3079dPg_xRPdBetzsskf09yfmDVZrs/export?format=csv&gid=712907827'
+
+type DbdReport = {
+  dateMs: number
+  tanggalSakit: string
+  nama: string
+  nik: string
+  kelamin: string
+  umur: string
+  kelurahan: string
+  rw: string
+  rt: string
+  rs: string
+  tanggalRawat: string
+  tanggalSelesai: string
+  kondisi: string
+  trombosit: string
+  gejala: string
+  wa: string
+}
+
+function formatSheetDate(value: string): string {
+  const raw = value.trim()
+  if (!raw) return ''
+  const d = new Date(raw)
+  if (Number.isNaN(d.getTime())) return raw
+  return d.toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })
+}
+
+function parseDbdRows(rows: string[][]): DbdReport[] {
+  const reports: DbdReport[] = []
+  for (const row of rows.slice(1)) {
+    const tanggal = (row[3] ?? '').trim()
+    const nama = (row[5] ?? '').trim()
+    if (!tanggal || !nama) continue
+    const date = new Date(tanggal)
+    const dateMs = Number.isNaN(date.getTime()) ? 0 : new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime()
+    reports.push({
+      dateMs,
+      tanggalSakit: formatSheetDate(tanggal),
+      nama,
+      nik: (row[4] ?? '').trim(),
+      kelamin: (row[6] ?? '').trim(),
+      umur: (row[7] ?? '').trim(),
+      kelurahan: (row[12] ?? '').trim().toUpperCase(),
+      rw: (row[13] ?? '').trim(),
+      rt: (row[14] ?? '').trim(),
+      rs: (row[21] ?? '').trim(),
+      tanggalRawat: formatSheetDate(row[20] ?? ''),
+      tanggalSelesai: formatSheetDate(row[22] ?? ''),
+      kondisi: (row[23] ?? '').trim(),
+      trombosit: (row[24] ?? '').trim(),
+      gejala: (row[25] ?? '').trim(),
+      wa: (row[29] ?? '').trim(),
+    })
+  }
+  return reports
+}
+
+function LaporanDbdPage() {
+  const [reports, setReports] = useState<DbdReport[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  const [filterKelurahan, setFilterKelurahan] = useState('')
+  const [filterStart, setFilterStart] = useState('')
+  const [filterEnd, setFilterEnd] = useState('')
+  const [searchQuery, setSearchQuery] = useState('')
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    setError('')
+    try {
+      const res = await fetch(DBD_SHEET_CSV_URL)
+      if (!res.ok) throw new Error(`Google Sheet merespons HTTP ${res.status}`)
+      const text = await res.text()
+      setReports(parseDbdRows(parseCsv(text)))
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Gagal memuat data laporan.')
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => { void load() }, [load])
+
+  const kelurahanOptions = [...new Set(reports.map((r) => r.kelurahan))].filter(Boolean).sort((a, b) => a.localeCompare(b, 'id-ID'))
+
+  const filtered = reports.filter((r) => {
+    if (filterKelurahan && r.kelurahan !== filterKelurahan) return false
+    if (!inDateRange(r.dateMs, dateRangeMs(filterStart, filterEnd))) return false
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase()
+      if (!r.nama.toLowerCase().includes(q) && !r.rs.toLowerCase().includes(q) && !r.gejala.toLowerCase().includes(q)) return false
+    }
+    return true
+  })
+
+  const totalKasus = filtered.length
+  const totalSembuh = filtered.filter((r) => r.kondisi.toLowerCase().includes('sembuh')).length
+  const totalMeninggal = filtered.filter((r) => r.kondisi.toLowerCase().includes('meninggal')).length
+  const cfr = totalKasus > 0 ? (totalMeninggal / totalKasus) * 100 : 0
+
+  function exportExcel() {
+    if (filtered.length === 0) {
+      window.alert('Tidak ada data laporan untuk diexport.')
+      return
+    }
+    const header = ['Tanggal Mulai Sakit', 'Nama Pasien', 'NIK', 'Jenis Kelamin', 'Umur', 'Kelurahan', 'RW', 'RT', 'Dirawat Di', 'Mulai Dirawat', 'Selesai Dirawat', 'Kondisi Pulang', 'Trombosit Terendah', 'Gejala', 'No WhatsApp']
+    const rows = filtered.map((r) => [r.tanggalSakit, r.nama, r.nik, r.kelamin, r.umur, r.kelurahan, r.rw, r.rt, r.rs, r.tanggalRawat, r.tanggalSelesai, r.kondisi, r.trombosit, r.gejala, r.wa])
+    const today = new Date().toISOString().slice(0, 10)
+    exportToExcel({ fileName: `laporan_dbd_${today}.xlsx`, sheetName: 'Laporan DBD', header, rows })
+  }
+
+  return (
+    <section className="module-page">
+      <header className="module-header">
+        <div>
+          <h2>Laporan DBD</h2>
+          <p>Rekap laporan kasus DBD warga, terintegrasi dari Google Sheet.</p>
+        </div>
+        <button className="secondary" onClick={() => void load()} type="button">Muat Ulang</button>
+      </header>
+
+      {error && <div className="form-error" style={{ marginBottom: '16px' }}>{error}</div>}
+
+      <div className="stat-grid">
+        <article className="stat-card">
+          <span className="stat-icon teal">🦟</span>
+          <div>
+            <p>Total Kasus</p>
+            <strong>{loading ? '…' : totalKasus}</strong>
+            <small>Kasus DBD dilaporkan</small>
+          </div>
+        </article>
+        <article className="stat-card">
+          <span className="stat-icon green">❤</span>
+          <div>
+            <p>Sembuh</p>
+            <strong>{loading ? '…' : totalSembuh}</strong>
+            <small>Kondisi pulang sembuh</small>
+          </div>
+        </article>
+        <article className="stat-card">
+          <span className="stat-icon coral">✝</span>
+          <div>
+            <p>Meninggal</p>
+            <strong>{loading ? '…' : totalMeninggal}</strong>
+            <small>Kondisi pulang meninggal</small>
+          </div>
+        </article>
+        <article className="stat-card">
+          <span className="stat-icon gold">%</span>
+          <div>
+            <p>CFR</p>
+            <strong>{loading ? '…' : `${cfr.toFixed(1)}%`}</strong>
+            <small>Meninggal / total kasus</small>
+          </div>
+        </article>
+      </div>
+
+      <div className="form-section" style={{ padding: '16px', marginBottom: '20px' }}>
+        <div className="form-grid" style={{ gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px', margin: 0 }}>
+          <label>Filter Kelurahan
+            <select value={filterKelurahan} onChange={(e) => setFilterKelurahan(e.target.value)}>
+              <option value="">Semua Kelurahan</option>
+              {kelurahanOptions.map((k) => <option key={k} value={k}>{k}</option>)}
+            </select>
+          </label>
+          <label>Tanggal Mulai Sakit (dari)
+            <input type="date" value={filterStart} onChange={(e) => setFilterStart(e.target.value)} />
+          </label>
+          <label>Tanggal Mulai Sakit (sampai)
+            <input type="date" value={filterEnd} onChange={(e) => setFilterEnd(e.target.value)} min={filterStart || undefined} />
+          </label>
+          <label>Pencarian
+            <input type="text" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder="Cari nama pasien, RS, atau gejala..." />
+          </label>
+        </div>
+      </div>
+
+      {loading ? <div className="empty-state"><span>🦟</span><h2>Memuat data laporan…</h2></div> : filtered.length === 0 ? <div className="empty-state"><span>🦟</span><h2>Tidak ada data laporan</h2><p>Ubah filter atau muat ulang data dari Google Sheet.</p></div> : (
+        <div className="data-table-container">
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th style={{ width: '50px' }}>No</th>
+                <th>Mulai Sakit</th>
+                <th>Nama Pasien</th>
+                <th>L/P</th>
+                <th>Umur</th>
+                <th>Kelurahan</th>
+                <th>RW/RT</th>
+                <th>Dirawat Di</th>
+                <th>Mulai Dirawat</th>
+                <th>Selesai Dirawat</th>
+                <th>Kondisi Pulang</th>
+                <th>Trombosit Terendah</th>
+                <th>Gejala</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((r, index) => (
+                <tr key={`${r.nik}-${r.nama}-${index}`}>
+                  <td style={{ textAlign: 'center', fontWeight: '600' }}>{index + 1}</td>
+                  <td>{r.tanggalSakit}</td>
+                  <td><strong>{r.nama}</strong></td>
+                  <td style={{ textAlign: 'center' }}>{r.kelamin}</td>
+                  <td>{r.umur}</td>
+                  <td>{r.kelurahan}</td>
+                  <td style={{ textAlign: 'center' }}>{r.rw}/{r.rt}</td>
+                  <td>{r.rs}</td>
+                  <td>{r.tanggalRawat || '-'}</td>
+                  <td>{r.tanggalSelesai || '-'}</td>
+                  <td>{r.kondisi || '-'}</td>
+                  <td style={{ textAlign: 'center' }}>{r.trombosit || '-'}</td>
+                  <td>{r.gejala || '-'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {!loading && filtered.length > 0 && (
+        <div className="form-actions" style={{ marginTop: '16px' }}>
+          <button className="primary" onClick={exportExcel} type="button">Export Excel</button>
+        </div>
+      )}
+    </section>
+  )
 }
 
 export default App

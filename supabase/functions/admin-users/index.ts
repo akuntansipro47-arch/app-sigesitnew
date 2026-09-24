@@ -160,13 +160,20 @@ Deno.serve(async (req) => {
       if (username !== undefined) updates.username = username
       if (nik !== undefined) updates.nik = nik
       if (phone !== undefined) updates.phone = phone
-      if (role !== undefined) updates.role = normalizeRole(role)
       if (kelurahanId !== undefined) updates.kelurahan_id = kelurahanId || null
       if (rwId !== undefined) updates.rw_id = rwId || null
       if (rtId !== undefined) updates.rt_id = rtId || null
       if (isActive !== undefined) updates.is_active = isActive
-      if (moduleAccess !== undefined) updates.module_access = moduleAccess
       if (email !== undefined) updates.email = email
+
+      // Keep role and module_access consistent: module_access is always derived from the
+      // effective role so a user can never end up with modules their role forbids.
+      if (role !== undefined || moduleAccess !== undefined) {
+        const { data: current } = await admin.from('profiles').select('role, module_access').eq('id', id).single()
+        const effectiveRole = normalizeRole(role !== undefined ? role : current?.role)
+        updates.role = effectiveRole
+        updates.module_access = normalizeModuleAccess(effectiveRole, moduleAccess !== undefined ? moduleAccess : current?.module_access)
+      }
 
       if (Object.keys(updates).length) {
         const { error } = await admin.from('profiles').update(updates).eq('id', id)

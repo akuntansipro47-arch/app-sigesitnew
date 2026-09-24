@@ -4675,6 +4675,10 @@ function UjiUdaraPage({ profile, locations, kelurahan, airTests, setAirTests }: 
 
   if (loading) return <section className="master-page"><div className="empty-state"><span>🌬️</span><h2>Memuat data uji udara…</h2></div></section>
 
+  // Nomor urut otomatis untuk field entry (tampil di form saja, tidak mengubah skema DB).
+  let entryNo = 0
+  const nextEntryNo = () => ++entryNo
+
   return <section className="master-page">
     <div className="page-heading">
       <div><p className="eyebrow">PEMERIKSAAN</p><h1>Hasil Uji Kualitas Udara</h1><p>Kelola hasil uji kualitas udara dari berbagai lokasi.</p></div>
@@ -4715,7 +4719,7 @@ function UjiUdaraPage({ profile, locations, kelurahan, airTests, setAirTests }: 
       <section className="form-section">
         <h2>Parameter Udara</h2>
         <div className="form-grid">
-          <label>Suhu (°C)
+          <label><span className="entry-no">{nextEntryNo()}.</span> Suhu (°C)
             <div className="inline-fields">
               <input value={formData.temperature1} onChange={(e) => setFormData({ ...formData, temperature1: e.target.value })} placeholder="1" />
               <input value={formData.temperature2} onChange={(e) => setFormData({ ...formData, temperature2: e.target.value })} placeholder="2" />
@@ -4728,42 +4732,42 @@ function UjiUdaraPage({ profile, locations, kelurahan, airTests, setAirTests }: 
               </select>
             </div>
           </label>
-          <label>Kelembapan (%)
+          <label><span className="entry-no">{nextEntryNo()}.</span> Kelembapan (%)
             <div className="inline-fields">
               <input value={formData.humidity1} onChange={(e) => setFormData({ ...formData, humidity1: e.target.value })} placeholder="1" />
               <input value={formData.humidity2} onChange={(e) => setFormData({ ...formData, humidity2: e.target.value })} placeholder="2" />
               <input value={formData.humidity3} onChange={(e) => setFormData({ ...formData, humidity3: e.target.value })} placeholder="3" />
             </div>
           </label>
-          <label>Kebisingan (dB)
+          <label><span className="entry-no">{nextEntryNo()}.</span> Kebisingan (dB)
             <div className="inline-fields">
               <input value={formData.noise1} onChange={(e) => setFormData({ ...formData, noise1: e.target.value })} placeholder="1" />
               <input value={formData.noise2} onChange={(e) => setFormData({ ...formData, noise2: e.target.value })} placeholder="2" />
               <input value={formData.noise3} onChange={(e) => setFormData({ ...formData, noise3: e.target.value })} placeholder="3" />
             </div>
           </label>
-          <label>Pencahayaan (lux)
+          <label><span className="entry-no">{nextEntryNo()}.</span> Pencahayaan (lux)
             <div className="inline-fields">
               <input value={formData.lighting1} onChange={(e) => setFormData({ ...formData, lighting1: e.target.value })} placeholder="1" />
               <input value={formData.lighting2} onChange={(e) => setFormData({ ...formData, lighting2: e.target.value })} placeholder="2" />
               <input value={formData.lighting3} onChange={(e) => setFormData({ ...formData, lighting3: e.target.value })} placeholder="3" />
             </div>
           </label>
-          <label>PM 2.5 (µg/m³)
+          <label><span className="entry-no">{nextEntryNo()}.</span> PM 2.5 (µg/m³)
             <div className="inline-fields">
               <input value={formData.pm25_1} onChange={(e) => setFormData({ ...formData, pm25_1: e.target.value })} placeholder="1" />
               <input value={formData.pm25_2} onChange={(e) => setFormData({ ...formData, pm25_2: e.target.value })} placeholder="2" />
               <input value={formData.pm25_3} onChange={(e) => setFormData({ ...formData, pm25_3: e.target.value })} placeholder="3" />
             </div>
           </label>
-          <label>PM 10 (µg/m³)
+          <label><span className="entry-no">{nextEntryNo()}.</span> PM 10 (µg/m³)
             <div className="inline-fields">
               <input value={formData.pm10_1} onChange={(e) => setFormData({ ...formData, pm10_1: e.target.value })} placeholder="1" />
               <input value={formData.pm10_2} onChange={(e) => setFormData({ ...formData, pm10_2: e.target.value })} placeholder="2" />
               <input value={formData.pm10_3} onChange={(e) => setFormData({ ...formData, pm10_3: e.target.value })} placeholder="3" />
             </div>
           </label>
-          <label>Ventilasi (m³/h)
+          <label><span className="entry-no">{nextEntryNo()}.</span> Ventilasi (m³/h)
             <div className="inline-fields">
               <input value={formData.ventilationRate1} onChange={(e) => setFormData({ ...formData, ventilationRate1: e.target.value })} placeholder="1" />
               <input value={formData.ventilationRate2} onChange={(e) => setFormData({ ...formData, ventilationRate2: e.target.value })} placeholder="2" />
@@ -4776,7 +4780,7 @@ function UjiUdaraPage({ profile, locations, kelurahan, airTests, setAirTests }: 
       <section className="form-section">
         <h2>Catatan</h2>
         <div className="form-grid">
-          <label className="wide">Catatan<textarea className="notes-textarea" style={{ width: '100%', minHeight: '120px', height: '120px' }} value={formData.notes} onChange={(e) => setFormData({ ...formData, notes: e.target.value })} rows={5} placeholder="Catatan..." /></label>
+          <label className="wide"><span className="entry-no">{nextEntryNo()}.</span> Catatan<textarea className="notes-textarea" style={{ width: '100%', minHeight: '120px', height: '120px' }} value={formData.notes} onChange={(e) => setFormData({ ...formData, notes: e.target.value })} rows={5} placeholder="Catatan..." /></label>
         </div>
       </section>
 

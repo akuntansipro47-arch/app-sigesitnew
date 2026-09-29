@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from 'react'
+import { Fragment, useCallback, useEffect, useRef, useState, type ChangeEvent, type FormEvent, type ReactNode } from 'react'
 import type { Session } from '@supabase/supabase-js'
+import * as XLSX from 'xlsx'
 import './App.css'
 import { supabase, supabaseConfigured } from './lib/supabase'
 import { exportToExcel } from './utils/exportExcel'
@@ -383,6 +384,17 @@ function hasEmptyUjiUdaraValues(values: Array<number | undefined>) {
   return values.some(isEmptyUjiUdaraValue)
 }
 
+// Nilai uji udara adalah numerik opsional. Terima koma desimal ala Indonesia
+// ("25,5" -> 25.5), tolak teks non-numerik agar tidak lolos jadi NaN ke DB.
+function parseUjiUdaraNumber(raw: string): number | null | 'invalid' {
+  const trimmed = raw.trim()
+  if (trimmed === '') return null
+  const normalized = trimmed.replace(/,/g, '.')
+  if (!/^[+-]?(\d+(\.\d+)?|\.\d+)$/.test(normalized)) return 'invalid'
+  const num = Number(normalized)
+  return Number.isFinite(num) ? num : 'invalid'
+}
+
 function formatUjiUdaraValues(values: Array<number | undefined>): ReactNode {
   return values.map((value, index) => (
     <span key={index}>
@@ -429,13 +441,13 @@ function mapAirQualityTestRow(row: AirQualityTestRow): AirQualityTest {
 function mapFoodInspectionRow(row: FoodInspectionResultRow): FoodInspectionResult {
   const rawSamples = row.samples && Array.isArray(row.samples) ? row.samples : []
   const samples: FoodInspectionSample[] = rawSamples.map((s: any) => ({
-    nama_makanan: String(s?.nama_makanan ?? s?.nama ?? ''),
+    nama_makanan: String(s?.nama_makanan ?? s?.jenis_makanan ?? s?.nama ?? ''),
     boraks: (s?.boraks ?? '') as 'Positif' | 'Negatif' | '',
     formalin: (s?.formalin ?? '') as 'Positif' | 'Negatif' | '',
     rodaminB: (s?.rodamin_b ?? s?.rodaminB ?? '') as 'Positif' | 'Negatif' | '',
     metanilYellow: (s?.metanil_yellow ?? s?.metanilYellow ?? '') as 'Positif' | 'Negatif' | '',
     eColi: (s?.e_coli ?? s?.eColi ?? '') as 'Positif' | 'Negatif' | '',
-    remarks: String(s?.remarks ?? ''),
+    remarks: String(s?.remarks ?? s?.keterangan ?? ''),
   }))
 
   if (samples.length === 0 && row.e_coli_result) {
@@ -820,10 +832,10 @@ function App() {
         return
       }
       
-      // Update the is_temp_password flag in profiles
+      // Update the is_temp_password flag in profiles.
+      // Catatan keamanan: jangan pernah menyimpan plaintext password di database.
       const { error: profileError } = await supabase.from('profiles').update({
         is_temp_password: false,
-        last_password: newPassword
       }).eq('id', profile.id)
       
       if (profileError) {
@@ -858,7 +870,7 @@ function App() {
 
   useEffect(() => {
     async function loadProfile() {
-      if (!supabase || !session) { setProfile(null); setProfileLoaded(true); return }
+      if (!supabase || !session) { setProfile(null); setProfileLoaded(true); profileSessionRef.current = null; return }
       // Retry profile loading with delay if initial load fails
       for (let i = 0; i < 3; i++) {
         const { data, error } = await supabase.from('profiles').select('*').eq('id', session.user.id).single()
@@ -867,10 +879,13 @@ function App() {
           const profileData = mapProfileRow(data as ProfileRow)
           setProfile(profileData)
           setProfileLoaded(true)
-          // Show change password modal if user has temp password
-          if (profileData.isTempPassword) {
+          // Tampilkan modal ganti password hanya saat sesi user baru terbentuk
+          // (login). Pembacaan ulang dalam sesi yang sama tidak boleh
+          // memunculkan ulang modal dari data basi.
+          if (profileData.isTempPassword && profileSessionRef.current !== session.user.id) {
             setShowChangePassword(true)
           }
+          profileSessionRef.current = session.user.id
           return
         }
         if (i < 2) await new Promise(resolve => setTimeout(resolve, 500))
@@ -892,7 +907,7 @@ function App() {
     void loadProfile()
   }, [session])
 
-  useEffect(() => {
+  const reloadRegions = useCallback(async () => {
     async function loadRegions() {
       if (supabaseConfigured && supabase) {
         try {
@@ -1000,6 +1015,10 @@ function App() {
   }, [])
 
   useEffect(() => {
+    void reloadRegions()
+  }, [reloadRegions])
+
+  useEffect(() => {
     if (regionsLoaded && !supabaseConfigured) {
       localStorage.setItem('sigesit-regions', JSON.stringify({ kelurahan, rw, rt }))
     }
@@ -1014,6 +1033,21 @@ function App() {
     if (!authUserId) return
     void reloadLocations()
   }, [reloadLocations, authUserId, profileId])
+
+  // Regions are RLS-gated like locations: the mount load can run before the
+  // session is ready and return zero rows, leaving kelurahan/RW/RT selects
+  // empty until a manual refresh. Reload once auth becomes available.
+  const regionsAuthReloaded = useRef(false)
+  // Mencegah modal ganti-password muncul dari pembacaan profil basi dalam sesi
+  // yang sama (mis. re-auth saat verifikasi password lama). Modal hanya
+  // otomatis tampil saat sesi user baru terbentuk (login).
+  const profileSessionRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (!authUserId) return
+    if (regionsAuthReloaded.current) return
+    regionsAuthReloaded.current = true
+    void reloadRegions()
+  }, [reloadRegions, authUserId])
 
   useEffect(() => {
     async function loadPKMInfo() {
@@ -1100,7 +1134,7 @@ function App() {
   }
   const showPemeriksaan = access.uji_air || access.uji_udara || access.pangan
   const showDataMaster = access.wilayah || access.lokasi || access.group_tpp || access.pengguna
-  const pkmName = pkmInfo?.namaPkm || 'SADAKELING PKM PADASUKA - KOTA CIMAHI'
+  const pkmName = 'KOTA CIMAHI'
   const pkmLogo = pkmInfo?.logoUrl
 
   return <main className="app-shell">
@@ -1134,9 +1168,9 @@ function App() {
     <header className="topbar">
       <div className="brand">
         <img className="brand-logo" src="/Aset/logo-sigesit-mark.png" alt="Logo SIGESIT Sadakeling" />
-        <div><strong>SIGESIT SADAKELING</strong><span>{pkmName}</span></div>
+        <div><strong>SIGESIT SADAKELING {pkmName}</strong></div>
       </div>
-      <div className="topbar-actions"><button className={`connection ${online ? 'online' : 'offline'}`} onClick={() => setOnline(!online)} type="button"><i />{online ? 'Terhubung' : 'Offline'}</button><button className="avatar" type="button" aria-label={`Profil ${displayName}`}>{initials || 'SZ'}</button>{session && <button className="logout" onClick={() => { void supabase?.auth.signOut() }} type="button">Keluar</button>}</div>
+      <div className="topbar-actions"><span className="topbar-copy">Copyright : Januari 2026</span><button className={`connection ${online ? 'online' : 'offline'}`} onClick={() => setOnline(!online)} type="button"><i />{online ? 'Terhubung' : 'Offline'}</button><button className="avatar" type="button" aria-label={`Profil ${displayName}`}>{initials || 'SZ'}</button>{session && <button className="logout" onClick={() => { void supabase?.auth.signOut() }} type="button">Keluar</button>}</div>
     </header>
     <section className="workspace">
       <aside className="sidebar">
@@ -1174,6 +1208,10 @@ function App() {
             {access.laporan_dbd && <button className={view === 'laporan_dbd' ? 'active' : ''} onClick={() => setView('laporan_dbd')} type="button"><span>🦟</span> Laporan DBD</button>}
           </nav>
         </>}
+        <p className="side-label">LAINNYA</p>
+        <nav>
+          <button className={view === 'settings' ? 'active' : ''} onClick={() => setView('settings')} type="button"><span>⚙</span> Pengaturan</button>
+        </nav>
         {/* Modul Profil disembunyikan dari navigasi */}
       </aside>
       <section className="content">{view === 'entry' && access.entry ? <EntryPage profile={profile} kelurahan={kelurahan} rw={rw} rt={rt} /> : view === 'wilayah' && access.wilayah ? <WilayahPage kelurahan={kelurahan} rw={rw} rt={rt} setKelurahan={setKelurahan} setRw={setRw} setRt={setRt} /> : view === 'pengguna' && access.pengguna ? <PenggunaPage kelurahan={kelurahan} rw={rw} rt={rt} currentUserId={session?.user.id} /> : view === 'profile' ? <ProfilePage /> : view === 'lokasi' && access.lokasi ? <LokasiPage kelurahan={kelurahan} rw={rw} rt={rt} locations={locations} reloadLocations={reloadLocations} /> : view === 'uji_air' && access.uji_air ? <UjiAirPage profile={profile} locations={locations} kelurahan={kelurahan} waterTests={waterTests} setWaterTests={setWaterTests} /> : view === 'uji_udara' && access.uji_udara ? <UjiUdaraPage profile={profile} locations={locations} kelurahan={kelurahan} airTests={airTests} setAirTests={setAirTests} /> : view === 'pangan' && access.pangan ? <PanganPage profile={profile} kelurahan={kelurahan} rw={rw} rt={rt} foodInspections={foodInspections} setFoodInspections={setFoodInspections} /> : view === 'group_tpp' && access.group_tpp ? <GroupTppPage /> : view === 'laporan' && access.laporan ? <LaporanPage /> : view === 'laporan_dbd' && access.laporan_dbd ? <LaporanDbdPage /> : view === 'settings' ? <SettingsPage /> : <Dashboard view={view} setView={setView} access={access} profile={profile} pkmInfo={pkmInfo} kelurahan={kelurahan} locations={locations} />}</section>
@@ -1527,8 +1565,8 @@ function WilayahPage({ kelurahan, rw, rt, setKelurahan, setRw, setRt }: { kelura
                     <td><small>{level === 'kelurahan' ? `Kode: ${item.code}` : level === 'rt' ? rtLocation(item) : `Kelurahan: ${parentName(item)}`}</small></td>
                     <td>
                       <div className="row-actions">
-                        <button className="edit-button" onClick={() => openForm(item)} type="button">Edit</button>
-                        <button className="delete-button" onClick={() => remove(item)} type="button">Hapus</button>
+                        <button className="edit-button btn-edit" onClick={() => openForm(item)} type="button">Edit</button>
+                        <button className="delete-button btn-delete" onClick={() => remove(item)} type="button">Hapus</button>
                       </div>
                     </td>
                   </tr>
@@ -1565,8 +1603,6 @@ type DashSummary = {
   abj: AbjReport[]
   dbd: DbdReport[]
 }
-
-type DashActivity = { key: string; icon: string; module: string; title: string; sub: string; dateMs: number; view: View }
 
 type DashBadge = { cls: 'ok' | 'warn' | 'bad' | 'neutral'; label: string }
 
@@ -1981,7 +2017,6 @@ function Dashboard({ view, setView, access, profile, pkmInfo, kelurahan, locatio
 
   // --- Helper nama wilayah & lokasi ---
   const kelNameById = (id?: string) => (id ? kelurahan.find((region) => region.id === id)?.name : undefined)
-  const locationName = (id?: string) => locations.find((location) => location.id === id)?.name
   const locationKelName = (id?: string) => {
     const location = locations.find((item) => item.id === id)
     return location?.kelurahanId ? kelNameById(location.kelurahanId) : undefined
@@ -2011,77 +2046,6 @@ function Dashboard({ view, setView, access, profile, pkmInfo, kelurahan, locatio
       ? `${topKel.length} dari ${kelCount.size} kelurahan dengan aktivitas pendataan & pelaporan terbanyak`
       : `${kelCount.size} kelurahan dengan aktivitas pendataan & pelaporan terbanyak`
 
-  // --- Aktivitas terbaru lintas modul ---
-  const feed: DashActivity[] = []
-  if (access.entry) {
-    data.entries.forEach((item) => feed.push({
-      key: `entry-${item.id}`,
-      icon: '⌂',
-      module: 'Entry Data',
-      title: `Entry #${item.entryNumber}`,
-      sub: kelNameById(item.kelurahanId) ?? 'Wilayah belum ditentukan',
-      dateMs: dashDateMs(item.entryDate),
-      view: 'entry',
-    }))
-  }
-  if (access.uji_air) {
-    data.water.forEach((item) => feed.push({
-      key: `water-${item.id}`,
-      icon: '💧',
-      module: 'Uji Air',
-      title: locationName(item.locationId) ?? 'Lokasi uji air',
-      sub: `Kualitas air · ${locationKelName(item.locationId) ?? '-'}`,
-      dateMs: dashDateMs(item.testDate),
-      view: 'uji_air',
-    }))
-  }
-  if (access.uji_udara) {
-    data.air.forEach((item) => feed.push({
-      key: `air-${item.id}`,
-      icon: '🌬️',
-      module: 'Uji Udara',
-      title: locationName(item.locationId) ?? 'Lokasi uji udara',
-      sub: `Kualitas udara · ${locationKelName(item.locationId) ?? '-'}`,
-      dateMs: dashDateMs(item.testDate),
-      view: 'uji_udara',
-    }))
-  }
-  if (access.pangan) {
-    data.food.forEach((item) => feed.push({
-      key: `food-${item.id}`,
-      icon: '🍱',
-      module: 'Pemeriksaan Pangan',
-      title: item.address || `Pemeriksaan #${item.entryNumber}`,
-      sub: `${item.samples.length} sampel · ${kelNameById(item.kelurahanId) ?? '-'}`,
-      dateMs: dashDateMs(item.entryDate),
-      view: 'pangan',
-    }))
-  }
-  if (access.laporan) {
-    data.abj.forEach((item) => feed.push({
-      key: `abj-${item.tanggal}-${item.kelurahan}-${item.rw}`,
-      icon: '🦟',
-      module: 'Laporan Jentik',
-      title: `${item.diperiksa} rumah diperiksa`,
-      sub: `Positif jentik ${item.positif} · ${item.kelurahan}`,
-      dateMs: item.dateMs,
-      view: 'laporan',
-    }))
-  }
-  if (access.laporan_dbd) {
-    data.dbd.forEach((item) => feed.push({
-      key: `dbd-${item.tanggalSakit}-${item.nama}`,
-      icon: '🩺',
-      module: 'Laporan DBD',
-      title: `Kasus DBD · ${item.nama}`,
-      sub: `${item.kondisi || 'Pelaporan'} · ${item.kelurahan}`,
-      dateMs: item.dateMs,
-      view: 'laporan_dbd',
-    }))
-  }
-  feed.sort((a, b) => b.dateMs - a.dateMs)
-  const feedTop = feed.slice(0, 8)
-
   // --- Sapaan & info umum ---
   const pkmName = pkmInfo?.namaPkm || 'PKM Padasuka'
   const firstName = (profile?.fullName || 'Syifa').split(' ')[0]
@@ -2097,7 +2061,6 @@ function Dashboard({ view, setView, access, profile, pkmInfo, kelurahan, locatio
       </div>
       <div className="dash-toolbar">
         <button className="secondary" onClick={() => void loadSummary()} disabled={refreshing} type="button">{refreshing ? '⟳ Memperbarui…' : '⟳ Muat Ulang'}</button>
-        {access.entry && <button className="primary" onClick={() => setView('entry')} type="button">+ Input data rumah</button>}
       </div>
     </div>
 
@@ -2373,41 +2336,94 @@ function Dashboard({ view, setView, access, profile, pkmInfo, kelurahan, locatio
           </div>
         ))}
       </div>
-
-      {/* Aktivitas terbaru */}
-      <section className="section-head">
-        <div>
-          <h2>Aktivitas terbaru</h2>
-          <p>Entri, pemeriksaan, dan laporan terbaru dari semua modul</p>
-        </div>
-        <span className="chart-total">{feed.length} data</span>
-      </section>
-
-      <section className="entry-list">
-        {feedTop.map((item) => (
-          <article className="entry-row" key={item.key}>
-            <div className="house-icon">{item.icon}</div>
-            <div className="entry-detail">
-              <strong>{item.title}</strong>
-              <span>{item.sub}</span>
-            </div>
-            <div className="entry-status">
-              <span className="feed-module">{item.module}</span>
-              <small>{dashFormatDate(item.dateMs)}</small>
-            </div>
-            <button className="text-button" onClick={() => setView(item.view)} type="button">Lihat</button>
-          </article>
-        ))}
-        {feedTop.length === 0 && (
-          <div className="empty-state small">
-            <span>🔔</span>
-            <h3>Belum ada aktivitas</h3>
-            <p>Data dari semua modul akan tampil di sini secara real-time.</p>
-          </div>
-        )}
-      </section>
     </>}
   </>
+}
+
+// === Import Entry Data via Excel (mengikuti rule form manual) ===
+const IMPORT_BASE_HEADERS = ['Tanggal (YYYY-MM-DD)', 'Kelurahan', 'RW', 'RT', 'Kelompok Entry', 'No KK (16 digit)', 'NIK Kepala Keluarga', 'Nama Kepala Keluarga', 'Alamat', 'Total Jiwa', 'Jiwa Menetap', 'Jumlah Jamban'] as const
+
+type ImportAnswer = { pillar: string; code: string; answer: boolean }
+type ImportCard = { rowNum: number; kkNumber: string; nik: string; name: string; address: string; totalJiwa: number; jiwaMenetap: number; jambanCount: number; answers: ImportAnswer[] }
+type ImportGroup = { key: string; entryDate: string; kelurahanId: string; rwId: string; rtId: string; cards: ImportCard[]; warnings: string[] }
+
+// Pilar single-choice di form (hanya boleh 1 jawaban Ya, sisanya dianggap Tidak)
+const IMPORT_SINGLE_CHOICE_PILLARS = ['jamban', 'sumber_air']
+
+function importQuestionPillar(): Record<string, string> {
+  const map: Record<string, string> = {}
+  Object.entries(questionnaireData).forEach(([pillar, questions]) => {
+    questions.forEach((q) => { map[q.code] = pillar })
+  })
+  return map
+}
+
+function parseImportBool(raw: unknown): boolean | null | 'invalid' {
+  if (raw === null || raw === undefined) return null
+  const text = String(raw).trim().toLowerCase()
+  if (text === '') return null
+  if (['ya', 'y', 'yes', '1', 'true', 'benar'].includes(text)) return true
+  if (['tidak', 't', 'no', '0', 'false', 'salah'].includes(text)) return false
+  return 'invalid'
+}
+
+function parseImportDate(raw: unknown): string | null {
+  if (raw instanceof Date && !Number.isNaN(raw.getTime())) {
+    const y = raw.getFullYear()
+    const m = String(raw.getMonth() + 1).padStart(2, '0')
+    const d = String(raw.getDate()).padStart(2, '0')
+    return `${y}-${m}-${d}`
+  }
+  const text = String(raw ?? '').trim()
+  const match = text.match(/^(\d{4})-(\d{2})-(\d{2})$/)
+  if (!match) return null
+  const dt = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]))
+  if (dt.getFullYear() !== Number(match[1]) || dt.getMonth() !== Number(match[2]) - 1 || dt.getDate() !== Number(match[3])) return null
+  return text
+}
+
+function parseImportInt(raw: unknown): number | null {
+  const text = String(raw ?? '').trim()
+  if (text === '') return 0
+  if (!/^\d+$/.test(text)) return null
+  const value = Number(text)
+  return Number.isSafeInteger(value) ? value : null
+}
+
+function downloadEntryImportTemplate() {
+  const codeToPillar = importQuestionPillar()
+  const codes = Object.keys(codeToPillar)
+  const dataHeader = [...IMPORT_BASE_HEADERS, ...codes]
+  const dataWs = XLSX.utils.aoa_to_sheet([dataHeader])
+  dataWs['!cols'] = [...IMPORT_BASE_HEADERS.map(() => ({ wch: 22 })), ...codes.map(() => ({ wch: 24 }))]
+  const exampleA = ['2026-09-25', 'Padasuka', '05', '01', '1', '3273010101010001', '3273010101010001', 'Contoh Kepala Keluarga 1', 'Jl. Contoh No. 1', 4, 4, 1]
+  const exampleB = ['2026-09-25', 'Padasuka', '05', '01', '1', '3273010101010002', '3273010101010002', 'Contoh Kepala Keluarga 2', 'Jl. Contoh No. 2', 3, 3, 1]
+  const exampleWs = XLSX.utils.aoa_to_sheet([dataHeader, exampleA, exampleB])
+  exampleWs['!cols'] = dataWs['!cols']
+  const panduanHeader = ['Kode Kolom', 'Pilar', 'Pertanyaan', 'Cara Isi']
+  const panduanRows: (string | number)[][] = [
+    ['Tanggal (YYYY-MM-DD)', '-', '-', 'Wajib. Format YYYY-MM-DD, mis. 2026-09-25'],
+    ['Kelurahan', '-', '-', 'Wajib. Nama persis seperti di menu Wilayah'],
+    ['RW / RT', '-', '-', 'Wajib. Nomor persis seperti di menu Wilayah'],
+    ['Kelompok Entry', '-', '-', 'Opsional. Samakan angkanya bila beberapa KK adalah 1 kunjungan/entry. Kosongkan bila tiap baris adalah entry sendiri'],
+    ['No KK (16 digit)', '-', '-', 'Wajib. Angka, maksimal 16 digit'],
+    ['NIK Kepala Keluarga', '-', '-', 'Opsional. Angka, maksimal 16 digit'],
+    ['Nama Kepala Keluarga', '-', '-', 'Wajib'],
+    ['Alamat', '-', '-', 'Opsional'],
+    ['Total Jiwa / Jiwa Menetap / Jumlah Jamban', '-', '-', 'Angka ≥ 0 (kosong = 0). Jiwa Menetap ≤ Total Jiwa'],
+  ]
+  Object.entries(questionnaireData).forEach(([pillar, questions]) => {
+    questions.forEach((q) => {
+      panduanRows.push([q.code, pillar, q.text, 'Ya / Tidak (kosongkan bila tidak ditanya)'])
+    })
+  })
+  const panduanWs = XLSX.utils.aoa_to_sheet([panduanHeader, ...panduanRows])
+  panduanWs['!cols'] = [{ wch: 32 }, { wch: 18 }, { wch: 60 }, { wch: 48 }]
+  const wb = XLSX.utils.book_new()
+  XLSX.utils.book_append_sheet(wb, dataWs, 'Data')
+  XLSX.utils.book_append_sheet(wb, exampleWs, 'Contoh')
+  XLSX.utils.book_append_sheet(wb, panduanWs, 'Panduan')
+  XLSX.writeFile(wb, 'template_import_entry.xlsx')
 }
 
 function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null; kelurahan: Region[]; rw: Region[]; rt: Region[] }) {
@@ -2420,20 +2436,47 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
   const [nextEntryNumber, setNextEntryNumber] = useState(1)
   const [searchKeyword, setSearchKeyword] = useState('')
   
-  // Filter regions based on user profile
-  const userKelurahan = profile?.kelurahanId ? kelurahan.filter(k => k.id === profile.kelurahanId) : kelurahan
-  const userRw = profile?.rwId ? rw.filter(r => r.id === profile.rwId) : 
+  // Filter regions based on user profile.
+  // Kader terkunci pada wilayahnya; super_admin/admin bebas memilih wilayah apapun.
+  const scopeByProfile = profile?.role === 'kader'
+  const userKelurahan = scopeByProfile && profile?.kelurahanId ? kelurahan.filter(k => k.id === profile.kelurahanId) : kelurahan
+  const userRw = !scopeByProfile ? rw :
+                profile?.rwId ? rw.filter(r => r.id === profile.rwId) :
                 profile?.kelurahanId ? rw.filter(r => r.kelurahanId === profile.kelurahanId) : rw
-  const userRt = profile?.rtId ? rt.filter(r => r.id === profile.rtId) : 
-                profile?.rwId ? rt.filter(r => r.rwId === profile.rwId) : 
+  const userRt = !scopeByProfile ? rt :
+                profile?.rtId ? rt.filter(r => r.id === profile.rtId) :
+                profile?.rwId ? rt.filter(r => r.rwId === profile.rwId) :
                 profile?.kelurahanId ? rt.filter(r => {
                   const rwItem = rw.find(rw => rw.id === r.rwId)
                   return rwItem?.kelurahanId === profile.kelurahanId
                 }) : rt
 
-  const [selectedKelurahanId, setSelectedKelurahanId] = useState(profile?.kelurahanId || '')
-  const [selectedRwId, setSelectedRwId] = useState(profile?.rwId || '')
-  const [selectedRtId, setSelectedRtId] = useState(profile?.rtId || '')
+  const [selectedKelurahanId, setSelectedKelurahanId] = useState(scopeByProfile ? profile?.kelurahanId || '' : '')
+  const [selectedRwId, setSelectedRwId] = useState(scopeByProfile ? profile?.rwId || '' : '')
+  const [selectedRtId, setSelectedRtId] = useState(scopeByProfile ? profile?.rtId || '' : '')
+
+  // Profil tiba belakangan (async); selaraskan auto-filter wilayah kader
+  // tanpa menimpa pilihan yang sudah diubah user. Admin tidak diisi otomatis
+  // agar bebas memilih wilayah apapun.
+  useEffect(() => {
+    if (profile?.role !== 'kader') return
+    if (profile?.kelurahanId) setSelectedKelurahanId((prev) => prev || profile.kelurahanId || '')
+    if (profile?.rwId) setSelectedRwId((prev) => prev || profile.rwId || '')
+    if (profile?.rtId) setSelectedRtId((prev) => prev || profile.rtId || '')
+  }, [profile?.role, profile?.kelurahanId, profile?.rwId, profile?.rtId])
+
+  // Nama penginput: dipetakan dari profiles via officer_id.
+  // Bila RLS membatasi, fallback ke nama profil sendiri / '-'.
+  const [officerNames, setOfficerNames] = useState<Record<string, string>>({})
+
+  function officerName(officerId: string) {
+    if (officerNames[officerId]) return officerNames[officerId]
+    if (profile && officerId === profile.id && profile.fullName) return profile.fullName
+    return '-'
+  }
+
+  // Baris entry yang diperluas untuk melihat semua sub-KK di dalamnya
+  const [expandedEntryId, setExpandedEntryId] = useState<string | null>(null)
   const [familyCards, setFamilyCards] = useState<FamilyCard[]>([])
   const [questionnaireResponses, setQuestionnaireResponses] = useState<QuestionnaireResponse[]>([])
   const [currentKkIndex, setCurrentKkIndex] = useState(0)
@@ -2546,6 +2589,20 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
         }
       })
       setEntries(entriesWithDetails)
+      // Petakan officer_id -> nama lengkap untuk kolom "Nama Penginput"
+      try {
+        const officerIds = [...new Set(data.map((e: any) => e.officer_id).filter(Boolean))] as string[]
+        if (officerIds.length > 0 && supabase) {
+          const { data: profData, error: profError } = await supabase.from('profiles').select('id, full_name').in('id', officerIds)
+          if (!profError && profData) {
+            const map: Record<string, string> = {}
+            profData.forEach((p: any) => { if (p?.id && p?.full_name) map[p.id] = String(p.full_name) })
+            setOfficerNames(map)
+          }
+        }
+      } catch (mapErr) {
+        console.warn('Gagal memuat nama penginput:', mapErr)
+      }
       void getNextEntryNumber(entriesWithDetails)
     } catch (err) {
       console.error('Unexpected error in loadEntries:', err)
@@ -2607,6 +2664,7 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
     
     return entry.entryDate.includes(searchKeyword)
       || entry.entryNumber.toString().includes(kw)
+      || officerName(entry.officerId).toLowerCase().includes(kw)
       || kelName.toLowerCase().includes(kw)
       || rwName.toLowerCase().includes(kw)
       || rtName.toLowerCase().includes(kw)
@@ -2617,7 +2675,7 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
 
   function exportExcel() {
     if (filteredEntries.length === 0) { window.alert('Tidak ada data entry untuk diexport.'); return }
-    const header = ['No', 'Nomor Entry', 'Tanggal', 'Kelurahan', 'RW', 'RT', 'KK Pertama', 'Kepala Keluarga', 'NIK', 'Total KK', 'Total Jiwa', 'Jiwa Menetap', 'Total Jamban']
+    const header = ['No', 'Nomor Entry', 'Tanggal', 'Nama Penginput', 'Kelurahan', 'RW', 'RT', 'KK Pertama', 'Kepala Keluarga', 'NIK', 'Total KK', 'Total Jiwa', 'Jiwa Menetap', 'Total Jamban']
     const rows: (string | number)[][] = []
     filteredEntries.forEach((entry, idx) => {
       const kelName = entry.kelurahanId ? kelurahan.find(k => k.id === entry.kelurahanId)?.name : undefined
@@ -2630,6 +2688,7 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
         idx + 1,
         entry.entryNumber,
         entry.entryDate,
+        officerName(entry.officerId),
         kelName ?? '-',
         rwName ? `RW ${rwName}` : '-',
         rtName ? `RT ${rtName}` : '-',
@@ -2646,12 +2705,218 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
     exportToExcel({ fileName: `data_entry_${today}.xlsx`, sheetName: 'Data Entry', header, rows })
   }
 
+  // --- Import Excel (validasi dulu, konfirmasi, baru simpan) ---
+  const importInputRef = useRef<HTMLInputElement | null>(null)
+  const [importErrors, setImportErrors] = useState<string[]>([])
+  const [pendingImport, setPendingImport] = useState<ImportGroup[] | null>(null)
+  const [importing, setImporting] = useState(false)
+  const [importProgress, setImportProgress] = useState('')
+
+  function parseImportRows(rows: unknown[][]): { groups: ImportGroup[]; errors: string[] } {
+    const errors: string[] = []
+    const codeToPillar = importQuestionPillar()
+    const header = (rows[0] ?? []).map((h) => String(h ?? '').trim())
+    const colIndex: Record<string, number> = {}
+    header.forEach((h, i) => { if (h && colIndex[h] === undefined) colIndex[h] = i })
+    const missing = IMPORT_BASE_HEADERS.filter((h) => colIndex[h] === undefined)
+    if (missing.length > 0) return { groups: [], errors: [`Header wajib tidak ditemukan: ${missing.join(', ')}. Unduh template terbaru.`] }
+    const questionCols: Array<{ code: string; pillar: string; index: number }> = []
+    header.forEach((h, i) => {
+      if ((IMPORT_BASE_HEADERS as readonly string[]).includes(h)) return
+      if (!h) return
+      const pillar = codeToPillar[h]
+      if (!pillar) errors.push(`Header tidak dikenal: "${h}". Hapus kolom ini atau gunakan kode pada sheet Panduan.`)
+      else questionCols.push({ code: h, pillar, index: i })
+    })
+    if (errors.length > 0) return { groups: [], errors }
+    const cell = (r: unknown[], name: string): unknown => {
+      const v = r[colIndex[name]]
+      return v === null || v === undefined ? '' : v
+    }
+
+    type StagedCard = ImportCard & { entryDate: string; kelurahanId: string; rwId: string; rtId: string; groupTag: string }
+    const staged: StagedCard[] = []
+    const isKader = profile?.role === 'kader'
+    rows.slice(1).forEach((r, i) => {
+      const rowNum = i + 2
+      const rowArray = r as unknown[]
+      if (rowArray.every((v) => String(v ?? '').trim() === '')) return
+      const prefix = `Baris ${rowNum}:`
+      const entryDate = parseImportDate(cell(rowArray, 'Tanggal (YYYY-MM-DD)'))
+      if (!entryDate) { errors.push(`${prefix} Tanggal tidak valid (format YYYY-MM-DD).`); return }
+      const kelName = String(cell(rowArray, 'Kelurahan')).trim().toLowerCase()
+      const kel = kelurahan.find((k) => k.name.trim().toLowerCase() === kelName)
+      if (!kel) { errors.push(`${prefix} Kelurahan tidak ditemukan.`); return }
+      if (isKader && profile?.kelurahanId && kel.id !== profile.kelurahanId) { errors.push(`${prefix} di luar wilayah Anda.`); return }
+      const rwName = String(cell(rowArray, 'RW')).trim()
+      const rwItem = rw.find((w) => w.kelurahanId === kel.id && w.name.trim() === rwName)
+      if (!rwItem) { errors.push(`${prefix} RW tidak ditemukan di kelurahan tersebut.`); return }
+      if (isKader && profile?.rwId && rwItem.id !== profile.rwId) { errors.push(`${prefix} di luar wilayah Anda.`); return }
+      const rtName = String(cell(rowArray, 'RT')).trim()
+      const rtItem = rt.find((t) => t.rwId === rwItem.id && t.name.trim() === rtName)
+      if (!rtItem) { errors.push(`${prefix} RT tidak ditemukan di RW tersebut.`); return }
+      if (isKader && profile?.rtId && rtItem.id !== profile.rtId) { errors.push(`${prefix} di luar wilayah Anda.`); return }
+      const kkNumber = String(cell(rowArray, 'No KK (16 digit)')).replace(/\D/g, '').slice(0, 16)
+      if (!kkNumber) { errors.push(`${prefix} No KK wajib diisi (angka, maks 16 digit).`); return }
+      const name = String(cell(rowArray, 'Nama Kepala Keluarga')).trim()
+      if (!name) { errors.push(`${prefix} Nama Kepala Keluarga wajib diisi.`); return }
+      const nikRaw = String(cell(rowArray, 'NIK Kepala Keluarga')).replace(/\D/g, '').slice(0, 16)
+      const nikInput = String(cell(rowArray, 'NIK Kepala Keluarga')).trim()
+      if (nikInput && !/^\d{1,16}$/.test(nikInput)) { errors.push(`${prefix} NIK harus angka maks 16 digit.`); return }
+      const totalJiwa = parseImportInt(cell(rowArray, 'Total Jiwa'))
+      const jiwaMenetap = parseImportInt(cell(rowArray, 'Jiwa Menetap'))
+      const jambanCount = parseImportInt(cell(rowArray, 'Jumlah Jamban'))
+      if (totalJiwa === null || jiwaMenetap === null || jambanCount === null) { errors.push(`${prefix} Total Jiwa / Jiwa Menetap / Jumlah Jamban harus angka ≥ 0.`); return }
+      if (jiwaMenetap > totalJiwa) { errors.push(`${prefix} Jiwa Menetap tidak boleh melebihi Total Jiwa.`); return }
+      const answers: ImportAnswer[] = []
+      let rowOk = true
+      questionCols.forEach((q) => {
+        const parsed = parseImportBool(rowArray[q.index])
+        if (parsed === 'invalid') { errors.push(`${prefix} jawaban "${q.code}" harus Ya/Tidak (atau dikosongkan).`); rowOk = false }
+        else if (parsed !== null) answers.push({ pillar: q.pillar, code: q.code, answer: parsed })
+      })
+      if (!rowOk) return
+      staged.push({
+        rowNum, entryDate, kelurahanId: kel.id, rwId: rwItem.id, rtId: rtItem.id,
+        groupTag: String(cell(rowArray, 'Kelompok Entry')).trim(),
+        kkNumber, nik: nikRaw, name, address: String(cell(rowArray, 'Alamat')).trim(),
+        totalJiwa, jiwaMenetap, jambanCount, answers,
+      })
+    })
+    if (errors.length > 0) return { groups: [], errors }
+    if (staged.length === 0) return { groups: [], errors: ['Tidak ada baris data. Isi sheet Data mengikuti template.'] }
+
+    // Samakan tanggal + wilayah + kelompok = 1 entry (maks 20 KK seperti form).
+    // Kelompok kosong = tiap baris menjadi entry sendiri.
+    const groupMap = new Map<string, StagedCard[]>()
+    staged.forEach((s, idx) => {
+      const key = s.groupTag ? [s.entryDate, s.kelurahanId, s.rwId, s.rtId, s.groupTag].join('|') : `single-${idx}`
+      const arr = groupMap.get(key) || []
+      arr.push(s)
+      groupMap.set(key, arr)
+    })
+    const groups: ImportGroup[] = []
+    groupMap.forEach((cards) => {
+      if (cards.length > 20) { errors.push(`Kelompok entry tanggal ${cards[0].entryDate} berisi ${cards.length} KK (maksimal 20 seperti form).`); return }
+      const warnings: string[] = []
+      // Samakan rule form: pilar single-choice hanya 1 jawaban Ya (sisanya jadi Tidak)
+      const normalized = cards.map((c) => {
+        const seen = new Set<string>()
+        const answers = c.answers.map((a) => {
+          if (!IMPORT_SINGLE_CHOICE_PILLARS.includes(a.pillar) || !a.answer || seen.has(a.pillar)) {
+            if (IMPORT_SINGLE_CHOICE_PILLARS.includes(a.pillar) && a.answer && seen.has(a.pillar)) {
+              warnings.push(`Baris ${c.rowNum}: pilar ${a.pillar} hanya boleh 1 jawaban Ya — "${a.code}" dianggap Tidak.`)
+              return { ...a, answer: false }
+            }
+            return a
+          }
+          seen.add(a.pillar)
+          return a
+        })
+        return { ...c, answers }
+      })
+      groups.push({
+        key: [cards[0].entryDate, cards[0].kelurahanId, cards[0].rwId, cards[0].rtId, cards[0].groupTag || `single-${cards[0].rowNum}`].join('|'),
+        entryDate: cards[0].entryDate, kelurahanId: cards[0].kelurahanId, rwId: cards[0].rwId, rtId: cards[0].rtId,
+        cards: normalized, warnings,
+      })
+    })
+    if (errors.length > 0) return { groups: [], errors }
+    return { groups, errors }
+  }
+
+  async function handleImportFile(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0]
+    if (!file) return
+    setImportErrors([])
+    setPendingImport(null)
+    try {
+      const buf = await file.arrayBuffer()
+      const wb = XLSX.read(buf, { type: 'array' })
+      const ws = wb.Sheets['Data'] ?? wb.Sheets[wb.SheetNames[0]]
+      if (!ws) { setImportErrors(['Sheet tidak ditemukan di file.']); return }
+      const rows = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, defval: '', raw: false }) as unknown[][]
+      const { groups, errors } = parseImportRows(rows)
+      if (errors.length > 0) { setImportErrors(errors); return }
+      setPendingImport(groups)
+    } catch (err) {
+      setImportErrors([err instanceof Error ? `Gagal membaca file: ${err.message}` : 'Gagal membaca file.'])
+    } finally {
+      if (importInputRef.current) importInputRef.current.value = ''
+    }
+  }
+
+  async function executeImport() {
+    if (!supabase || !profile || !pendingImport || pendingImport.length === 0) return
+    setImporting(true)
+    setImportProgress('')
+    try {
+      let localMax = entries.length > 0 ? Math.max(...entries.map((e) => e.entryNumber).filter(Number.isFinite)) : 0
+      for (let gi = 0; gi < pendingImport.length; gi++) {
+        const g = pendingImport[gi]
+        setImportProgress(`Menyimpan entry ${gi + 1} dari ${pendingImport.length}…`)
+        // Nomor entry mengikuti rule form (RPC per petugas, fallback lokal)
+        let entryNumber = localMax + 1
+        try {
+          const { data } = await supabase.rpc('get_next_entry_number', { officer_id: profile.id })
+          const rpcValue = Number(data)
+          if (Number.isFinite(rpcValue) && rpcValue > 0) entryNumber = Math.max(Math.trunc(rpcValue), localMax + 1)
+        } catch { /* pakai fallback lokal */ }
+        const { data: newEntry, error: entryError } = await supabase.from('entries').insert({
+          entry_number: entryNumber,
+          entry_date: g.entryDate,
+          officer_id: profile.id,
+          created_by: profile.id,
+          kelurahan_id: g.kelurahanId,
+          rw_id: g.rwId,
+          rt_id: g.rtId,
+        }).select().single()
+        if (entryError || !newEntry) throw new Error(`Gagal menyimpan entry tanggal ${g.entryDate}: ${entryError?.message || 'unknown'}`)
+        localMax = Math.max(localMax, entryNumber)
+        const fcPayload = g.cards.map((c, idx) => ({
+          entry_id: newEntry.id,
+          kk_sequence: idx + 1,
+          kk_number: c.kkNumber,
+          nik_kepala_keluarga: c.nik,
+          kepala_keluarga: c.name,
+          address: c.address,
+          total_jiwa: c.totalJiwa,
+          jiwa_menetap: c.jiwaMenetap,
+          jamban_count: c.jambanCount,
+        }))
+        const { data: newFcs, error: fcError } = await supabase.from('family_cards').insert(fcPayload).select()
+        if (fcError || !newFcs) throw new Error(`Gagal menyimpan KK tanggal ${g.entryDate}: ${fcError?.message || 'unknown'}`)
+        const orderedFcs = [...(newFcs as Array<{ id: string; kk_sequence: number }>)].sort((a, b) => a.kk_sequence - b.kk_sequence)
+        const qrPayload: Array<{ family_card_id: string; pillar: string; question_code: string; answer: boolean }> = []
+        orderedFcs.forEach((fc, idx) => {
+          g.cards[idx].answers.forEach((a) => {
+            qrPayload.push({ family_card_id: fc.id, pillar: a.pillar, question_code: a.code, answer: a.answer })
+          })
+        })
+        if (qrPayload.length > 0) {
+          const { error: qrError } = await supabase.from('questionnaire_responses').insert(qrPayload)
+          if (qrError) throw new Error(`Gagal menyimpan kuesioner tanggal ${g.entryDate}: ${qrError.message}`)
+        }
+      }
+      const totalKk = pendingImport.reduce((sum, g) => sum + g.cards.length, 0)
+      setPendingImport(null)
+      setImportProgress('')
+      window.alert(`Import selesai: ${pendingImport.length} entry, ${totalKk} KK tersimpan.`)
+      void loadEntries()
+    } catch (err) {
+      setImportErrors([err instanceof Error ? err.message : 'Import gagal.'])
+    } finally {
+      setImporting(false)
+    }
+  }
+
   function openForm(entry?: Entry) {
     setEditing(entry ?? null)
     setError('')
-    setSelectedKelurahanId(entry?.kelurahanId || profile?.kelurahanId || '')
-    setSelectedRwId(entry?.rwId || profile?.rwId || '')
-    setSelectedRtId(entry?.rtId || profile?.rtId || '')
+    const lockWilayah = profile?.role === 'kader'
+    setSelectedKelurahanId(entry?.kelurahanId || (lockWilayah ? profile?.kelurahanId || '' : ''))
+    setSelectedRwId(entry?.rwId || (lockWilayah ? profile?.rwId || '' : ''))
+    setSelectedRtId(entry?.rtId || (lockWilayah ? profile?.rtId || '' : ''))
     setFamilyCards(entry?.familyCards || [])
     setQuestionnaireResponses(normalizeSingleChoiceResponses(entry?.questionnaireResponses || []))
     setCurrentKkIndex(0)
@@ -2889,9 +3154,46 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
       </div>
       <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
         <button className="secondary" onClick={exportExcel} type="button" disabled={entries.length === 0}>Export Excel</button>
+        <button className="secondary" onClick={downloadEntryImportTemplate} type="button">Download Template</button>
+        <button className="secondary" onClick={() => importInputRef.current?.click()} type="button" disabled={importing}>Import Excel</button>
         <button className="primary" onClick={() => openForm()} type="button">+ Tambah Entry</button>
+        <input ref={importInputRef} type="file" accept=".xlsx,.xls,.csv" onChange={handleImportFile} style={{ display: 'none' }} />
       </div>
     </div>
+
+    {!formOpen && importErrors.length > 0 && (
+      <div className="form-section" style={{ borderColor: '#fecaca' }}>
+        <h2>Import dibatalkan — perbaiki dulu ({importErrors.length} masalah)</h2>
+        <ul style={{ margin: '12px 0', paddingLeft: '20px', color: '#b91c1c', fontSize: '13px', maxHeight: '220px', overflowY: 'auto', display: 'grid', gap: '4px' }}>
+          {importErrors.slice(0, 30).map((msg, i) => <li key={i}>{msg}</li>)}
+        </ul>
+        {importErrors.length > 30 && <p style={{ color: 'var(--muted)', fontSize: '12px' }}>…dan {importErrors.length - 30} masalah lainnya.</p>}
+        <div className="form-actions">
+          <button className="secondary" onClick={() => setImportErrors([])} type="button">Tutup</button>
+        </div>
+      </div>
+    )}
+
+    {!formOpen && pendingImport && (
+      <div className="form-section">
+        <h2>Konfirmasi import</h2>
+        <p style={{ color: 'var(--muted)', fontSize: '13px' }}>
+          Siap menyimpan {pendingImport.length} entry dengan {pendingImport.reduce((s, g) => s + g.cards.length, 0)} KK
+          {' '}dan {pendingImport.reduce((s, g) => s + g.cards.reduce((a, c) => a + c.answers.length, 0), 0)} jawaban kuesioner
+          {' '}sebagai {profile?.fullName || 'petugas'}.
+        </p>
+        {pendingImport.flatMap((g) => g.warnings).length > 0 && (
+          <ul style={{ margin: '12px 0', paddingLeft: '20px', color: '#92400e', fontSize: '13px', display: 'grid', gap: '4px' }}>
+            {pendingImport.flatMap((g) => g.warnings).slice(0, 10).map((w, i) => <li key={i}>{w}</li>)}
+          </ul>
+        )}
+        {importProgress && <p style={{ fontSize: '13px', fontWeight: 600 }}>{importProgress}</p>}
+        <div className="form-actions">
+          <button className="secondary" onClick={() => setPendingImport(null)} type="button" disabled={importing}>Batal</button>
+          <button className="primary" onClick={() => void executeImport()} type="button" disabled={importing}>{importing ? 'Mengimpor…' : 'Konfirmasi & Impor'}</button>
+        </div>
+      </div>
+    )}
 
     {formOpen && <form className="entry-form" onSubmit={submit}>
       <div className="page-heading">
@@ -3053,7 +3355,7 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
       <>
         {/* Filter Pencarian */}
         <div className="form-section" style={{ padding: '16px', marginBottom: '20px' }}>
-          <div className="form-grid" style={{ gridTemplateColumns: 'repeat(2, 1fr)', gap: '16px', margin: 0 }}>
+          <div className="filter-grid cols-2" style={{ gap: '16px', margin: 0 }}>
             <label>Pencarian
               <input 
                 type="text" 
@@ -3080,6 +3382,7 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
                 <th style={{ width: '50px' }}>No</th>
                 <th>Nomor Entry</th>
                 <th>Tanggal</th>
+                <th>Nama Penginput</th>
                 <th>Lokasi</th>
                 <th>KK Pertama</th>
                 <th>Kepala Keluarga</th>
@@ -3097,23 +3400,34 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
                 const rtName = entry.rtId ? rt.find(r => r.id === entry.rtId)?.name : undefined
                 const firstKk = entry.familyCards[0]
                 const totalJamban = entry.familyCards.reduce((sum, fc) => sum + (fc.jambanCount || 0), 0)
-                
+                const extraKkCount = entry.familyCards.length - 1
+                const isExpanded = expandedEntryId === entry.id
+
                 return (
-                  <tr key={entry.id}>
+                  <Fragment key={entry.id}>
+                  <tr>
                     <td style={{ textAlign: 'center', fontWeight: 600 }}>{index + 1}</td>
                     <td style={{ textAlign: 'center', fontWeight: 600 }}>{entry.entryNumber || '-'}</td>
                     <td>{entry.entryDate}</td>
+                    <td style={{ fontWeight: 500 }}>{officerName(entry.officerId)}</td>
                     <td>
                       <div style={{ fontWeight: 500 }}>{kelName}</div>
-                      <small style={{ color: '#666' }}>
+                      <small style={{ color: 'var(--muted)' }}>
                         {rwName && `RW ${rwName}`} {rtName && `RT ${rtName}`}
                       </small>
                     </td>
-                    <td style={{ textAlign: 'center' }}>{firstKk?.kkNumber || '-'}</td>
+                    <td style={{ textAlign: 'center' }}>
+                      <div style={{ fontWeight: 600 }}>{firstKk?.kkNumber || '-'}</div>
+                      {extraKkCount > 0 && (
+                        <button className="text-button" onClick={() => setExpandedEntryId(isExpanded ? null : entry.id)} type="button" style={{ marginTop: '4px' }}>
+                          {isExpanded ? 'Sembunyikan' : `+${extraKkCount} KK lainnya`}
+                        </button>
+                      )}
+                    </td>
                     <td>
                       <div style={{ fontWeight: 500 }}>{firstKk?.kepalaKeluarga || '-'}</div>
                       {firstKk?.nikKepalaKeluarga && (
-                        <small style={{ color: '#666', fontSize: '11px' }}>
+                        <small style={{ color: 'var(--muted)', fontSize: '11px' }}>
                           NIK: {firstKk.nikKepalaKeluarga}
                         </small>
                       )}
@@ -3124,11 +3438,27 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
                     <td style={{ textAlign: 'center', fontWeight: 600 }}>{totalJamban}</td>
                     <td>
                       <div className="entry-actions">
-                        <button className="text-button" onClick={() => openForm(entry)} type="button">Edit</button>
-                        <button className="text-button" onClick={() => deleteEntry(entry)} type="button">Hapus</button>
+                        <button className="text-button btn-edit" onClick={() => openForm(entry)} type="button">Edit</button>
+                        <button className="text-button btn-delete" onClick={() => deleteEntry(entry)} type="button">Hapus</button>
                       </div>
                     </td>
                   </tr>
+                  {isExpanded && extraKkCount > 0 && (
+                    <tr className="sub-kk-row">
+                      <td colSpan={12}>
+                        <div className="sub-kk-list">
+                          {entry.familyCards.map((fc, fcIndex) => (
+                            <div className="sub-kk-item" key={fc.id || `${entry.id}-kk-${fcIndex}`}>
+                              <strong>{fcIndex + 1}. {fc.kkNumber || '-'}</strong>
+                              <span>{fc.kepalaKeluarga || '-'}{fc.nikKepalaKeluarga ? ` · NIK: ${fc.nikKepalaKeluarga}` : ''}</span>
+                              <span>{fc.totalJiwa || 0} jiwa · {fc.jiwaMenetap || 0} menetap · {fc.jambanCount || 0} jamban</span>
+                            </div>
+                          ))}
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                  </Fragment>
                 )
               })}
             </tbody>
@@ -3316,7 +3646,7 @@ function ProfilePage() {
 
     <div className="form-section" style={{ maxWidth: '800px' }}>
       <form onSubmit={handleSubmit}>
-        <div className="form-grid" style={{ gridTemplateColumns: '1fr 1fr' }}>
+        <div className="filter-grid cols-2" style={{ marginTop: '24px' }}>
           <label className="wide">Logo PKM
             <div style={{ display: 'flex', alignItems: 'center', gap: '16px', marginTop: '8px' }}>
               {logoPreview && (
@@ -3595,7 +3925,7 @@ function LokasiPage({ kelurahan, rw, rt, locations, reloadLocations }: { kelurah
 
     {!formOpen && (
       <div className="region-form" style={{ padding: '16px', marginBottom: '18px' }}>
-        <div className="region-form-fields" style={{ marginTop: 0, gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+        <div className="region-form-fields" style={{ marginTop: 0, gap: '16px' }}>
           <label>
             Filter Kelurahan
             <select 
@@ -3743,8 +4073,8 @@ function LokasiPage({ kelurahan, rw, rt, locations, reloadLocations }: { kelurah
                   </td>
                   <td>
                     <div className="row-actions">
-                      <button className="edit-button" onClick={() => openForm(location)} type="button">Edit</button>
-                      <button className="delete-button" onClick={() => remove(location)} type="button">Hapus</button>
+                      <button className="edit-button btn-edit" onClick={() => openForm(location)} type="button">Edit</button>
+                      <button className="delete-button btn-delete" onClick={() => remove(location)} type="button">Hapus</button>
                     </div>
                   </td>
                 </tr>
@@ -3770,6 +4100,8 @@ function UjiAirPage({ profile, locations, kelurahan, waterTests, setWaterTests }
   const [formOpen, setFormOpen] = useState(false)
   // State untuk filter lokasi
   const [filterKelurahanId, setFilterKelurahanId] = useState('')
+  const [filterStart, setFilterStart] = useState(defaultFilterStart)
+  const [filterEnd, setFilterEnd] = useState(defaultFilterEnd)
   const [searchQuery, setSearchQuery] = useState('')
   
   // Filter tests berdasarkan filter yang dipilih
@@ -3778,6 +4110,7 @@ function UjiAirPage({ profile, locations, kelurahan, waterTests, setWaterTests }
       const location = locations.find(loc => loc.id === test.locationId)
       if (location?.kelurahanId !== filterKelurahanId) return false
     }
+    if (!inISODateRange(test.testDate, filterStart, filterEnd)) return false
     if (searchQuery.trim()) {
       const query = searchQuery.toLowerCase()
       const info = getLocationInfo(test.locationId)
@@ -3819,8 +4152,8 @@ function UjiAirPage({ profile, locations, kelurahan, waterTests, setWaterTests }
     { key: 'waterTemperatureValue', label: 'Suhu Air' },
     { key: 'tdsValue', label: 'TDS (mg/L)' },
     { key: 'turbidityValue', label: 'Kekeruhan (NTU)' },
-    { key: 'colorValue', label: 'Warna' },
-    { key: 'odorValue', label: 'Bau' },
+    // Warna & Bau sengaja dikecualikan: kolom deskriptif bebas (mis. "Jernih",
+    // "Tidak berbau"), bukan angka/simbol.
     { key: 'phValue', label: 'pH' },
     { key: 'nitrateValue', label: 'Nitrat (mg/L)' },
     { key: 'nitriteValue', label: 'Nitrit (mg/L)' },
@@ -4068,18 +4401,18 @@ function UjiAirPage({ profile, locations, kelurahan, waterTests, setWaterTests }
 
     try {
       // Try with new column structure first
-      let payload = {
+      // Warna/Bau/Catatan = teks bebas; kolom ukur = angka/simbol (sudah divalidasi di atas).
+      const basePayload = {
         location_id: formData.locationId,
         test_date: formData.testDate,
-        officer_id: profile.id,
         water_temperature_value: toDbUjiAirValue(formData.waterTemperatureValue),
         water_temperature_unit: formData.waterTemperatureUnit,
         air_temperature_value: toDbUjiAirValue(formData.airTemperatureValue),
         air_temperature_unit: formData.airTemperatureUnit,
         tds_value: toDbUjiAirValue(formData.tdsValue),
         turbidity_value: toDbUjiAirValue(formData.turbidityValue),
-        color_value: toDbUjiAirValue(formData.colorValue),
-        odor_value: toDbUjiAirValue(formData.odorValue),
+        color_value: toDbTextValue(formData.colorValue),
+        odor_value: toDbTextValue(formData.odorValue),
         ph_value: toDbUjiAirValue(formData.phValue),
         nitrite_value: toDbUjiAirValue(formData.nitriteValue),
         nitrate_value: toDbUjiAirValue(formData.nitrateValue),
@@ -4093,6 +4426,9 @@ function UjiAirPage({ profile, locations, kelurahan, waterTests, setWaterTests }
         coliform_value: toDbUjiAirValue(formData.coliformValue),
         notes: toDbTextValue(formData.notes),
       }
+      // officer_id hanya di-set saat insert; saat edit pertahankan pemilik asli
+      // agar edit oleh admin tidak mencuri kepemilikan data.
+      let payload = editing ? basePayload : { ...basePayload, officer_id: profile.id }
 
       let result
       if (editing) {
@@ -4106,16 +4442,15 @@ function UjiAirPage({ profile, locations, kelurahan, waterTests, setWaterTests }
         console.log('New columns not found, using fallback to old structure')
         
         // Fallback to old column structure for backward compatibility
-        const fallbackPayload: any = {
+        const fallbackBase: any = {
           location_id: formData.locationId,
           test_date: formData.testDate,
-          officer_id: profile.id,
           temperature_value: toDbUjiAirValue(formData.waterTemperatureValue),
           temperature_unit: formData.waterTemperatureUnit,
           tds_value: toDbUjiAirValue(formData.tdsValue),
           turbidity_value: toDbUjiAirValue(formData.turbidityValue),
-          color_value: toDbUjiAirValue(formData.colorValue),
-          odor_value: toDbUjiAirValue(formData.odorValue),
+          color_value: toDbTextValue(formData.colorValue),
+          odor_value: toDbTextValue(formData.odorValue),
           ph_value: toDbUjiAirValue(formData.phValue),
           nitrite_value: toDbUjiAirValue(formData.nitriteValue),
           nitrate_value: toDbUjiAirValue(formData.nitrateValue),
@@ -4129,6 +4464,7 @@ function UjiAirPage({ profile, locations, kelurahan, waterTests, setWaterTests }
           coliform_value: toDbUjiAirValue(formData.coliformValue),
           notes: toDbTextValue(formData.notes),
         }
+        const fallbackPayload: any = editing ? fallbackBase : { ...fallbackBase, officer_id: profile.id }
 
         if (editing) {
           result = await supabase.from('water_quality_tests').update(fallbackPayload).eq('id', editing.id)
@@ -4231,8 +4567,8 @@ function UjiAirPage({ profile, locations, kelurahan, waterTests, setWaterTests }
           </label>
           <label><span className="entry-no">{nextEntryNo()}.</span> TDS (mg/L)<input value={formData.tdsValue} onChange={(e) => setValidatedUjiValue('tdsValue', e.target.value)} placeholder="Angka/simbol: < > = + - / , ." /></label>
           <label><span className="entry-no">{nextEntryNo()}.</span> Kekeruhan (NTU)<input value={formData.turbidityValue} onChange={(e) => setValidatedUjiValue('turbidityValue', e.target.value)} placeholder="Angka/simbol: < > = + - / , ." /></label>
-          <label><span className="entry-no">{nextEntryNo()}.</span> Warna (TCU)<input value={formData.colorValue} onChange={(e) => setValidatedUjiValue('colorValue', e.target.value)} placeholder="Angka/simbol: < > = + - / , ." /></label>
-          <label><span className="entry-no">{nextEntryNo()}.</span> Bau<input value={formData.odorValue} onChange={(e) => setValidatedUjiValue('odorValue', e.target.value)} placeholder="Angka/simbol: < > = + - / , ." /></label>
+          <label><span className="entry-no">{nextEntryNo()}.</span> Warna (TCU)<input value={formData.colorValue} onChange={(e) => setFormData({ ...formData, colorValue: e.target.value })} placeholder="Mis. Jernih, Keruh..." /></label>
+          <label><span className="entry-no">{nextEntryNo()}.</span> Bau<input value={formData.odorValue} onChange={(e) => setFormData({ ...formData, odorValue: e.target.value })} placeholder="Mis. Tidak berbau..." /></label>
         </div>
       </section>
 
@@ -4276,9 +4612,9 @@ function UjiAirPage({ profile, locations, kelurahan, waterTests, setWaterTests }
 
     {!formOpen && tests.length > 0 && (
       <>
-        {/* Filter Lokasi & Pencarian */}
+        {/* Filter Lokasi, Tanggal & Pencarian */}
         <div className="form-section" style={{ padding: '16px', marginBottom: '20px' }}>
-          <div className="form-grid" style={{ gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px', margin: 0 }}>
+          <div className="filter-grid cols-3" style={{ gap: '16px', margin: 0 }}>
             <label>Filter Kelurahan
               <select 
                 value={filterKelurahanId} 
@@ -4290,7 +4626,22 @@ function UjiAirPage({ profile, locations, kelurahan, waterTests, setWaterTests }
                 {kelurahan.map(k => <option key={k.id} value={k.id}>{k.name}</option>)}
               </select>
             </label>
-            <label>Pencarian
+            <label>Tanggal Awal
+              <input
+                type="date"
+                value={filterStart}
+                onChange={(e) => setFilterStart(e.target.value)}
+              />
+            </label>
+            <label>Tanggal Akhir
+              <input
+                type="date"
+                value={filterEnd}
+                onChange={(e) => setFilterEnd(e.target.value)}
+                min={filterStart || undefined}
+              />
+            </label>
+            <label className="span-all">Pencarian
               <input 
                 type="text" 
                 value={searchQuery} 
@@ -4301,11 +4652,14 @@ function UjiAirPage({ profile, locations, kelurahan, waterTests, setWaterTests }
             <div style={{ display: 'flex', alignItems: 'flex-end' }}>
               <button 
                 className="secondary" 
-                onClick={() => { setFilterKelurahanId(''); setSearchQuery('') }}
+                onClick={() => { setFilterKelurahanId(''); setFilterStart(defaultFilterStart()); setFilterEnd(defaultFilterEnd()); setSearchQuery('') }}
                 style={{ width: '100%' }}
               >
                 Reset Filter
               </button>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'flex-end' }}>
+              <span style={{ color: 'var(--muted)', fontSize: '13px' }}>Menampilkan {filteredTests.length} dari {tests.length} data</span>
             </div>
           </div>
         </div>
@@ -4338,6 +4692,9 @@ function UjiAirPage({ profile, locations, kelurahan, waterTests, setWaterTests }
             </tr>
           </thead>
           <tbody>
+            {filteredTests.length === 0 && (
+              <tr><td colSpan={23} style={{ textAlign: 'center', padding: '24px', color: 'var(--muted)' }}>Tidak ada data pada periode/filter yang dipilih. Ubah filter tanggal atau klik Reset Filter.</td></tr>
+            )}
             {filteredTests.map((test, index) => {
               const locationInfo = getLocationInfo(test.locationId)
               return (
@@ -4365,8 +4722,8 @@ function UjiAirPage({ profile, locations, kelurahan, waterTests, setWaterTests }
                   <td className={isEmptyUjiAirValue(test.notes) ? 'uji-empty-cell' : undefined}>{formatWaterValue(test.notes)}</td>
                   <td>
                     <div className="entry-actions">
-                      <button className="text-button" onClick={() => openForm(test)} type="button">Edit</button>
-                      <button className="text-button" onClick={() => remove(test)} type="button">Hapus</button>
+                      <button className="text-button btn-edit" onClick={() => openForm(test)} type="button">Edit</button>
+                      <button className="text-button btn-delete" onClick={() => remove(test)} type="button">Hapus</button>
                     </div>
                   </td>
                 </tr>
@@ -4396,6 +4753,8 @@ function UjiUdaraPage({ profile, locations, kelurahan, airTests, setAirTests }: 
   const [error, setError] = useState('')
   // State untuk filter lokasi
   const [filterKelurahanId, setFilterKelurahanId] = useState('')
+  const [filterStart, setFilterStart] = useState(defaultFilterStart)
+  const [filterEnd, setFilterEnd] = useState(defaultFilterEnd)
   const [searchQuery, setSearchQuery] = useState('')
   
   // Filter tests berdasarkan filter yang dipilih
@@ -4404,6 +4763,7 @@ function UjiUdaraPage({ profile, locations, kelurahan, airTests, setAirTests }: 
       const location = locations.find(loc => loc.id === test.locationId)
       if (location?.kelurahanId !== filterKelurahanId) return false
     }
+    if (!inISODateRange(test.testDate, filterStart, filterEnd)) return false
     if (searchQuery.trim()) {
       const query = searchQuery.toLowerCase()
       const info = getLocationInfo(test.locationId)
@@ -4613,34 +4973,68 @@ function UjiUdaraPage({ profile, locations, kelurahan, airTests, setAirTests }: 
     }
 
     try {
-      const payload = {
+      const numericFields: Array<{ key: string; label: string; value: string }> = [
+        { key: 'temperature_1', label: 'Suhu 1', value: formData.temperature1 },
+        { key: 'temperature_2', label: 'Suhu 2', value: formData.temperature2 },
+        { key: 'temperature_3', label: 'Suhu 3', value: formData.temperature3 },
+        { key: 'humidity_1', label: 'Kelembapan 1', value: formData.humidity1 },
+        { key: 'humidity_2', label: 'Kelembapan 2', value: formData.humidity2 },
+        { key: 'humidity_3', label: 'Kelembapan 3', value: formData.humidity3 },
+        { key: 'noise_1', label: 'Kebisingan 1', value: formData.noise1 },
+        { key: 'noise_2', label: 'Kebisingan 2', value: formData.noise2 },
+        { key: 'noise_3', label: 'Kebisingan 3', value: formData.noise3 },
+        { key: 'lighting_1', label: 'Pencahayaan 1', value: formData.lighting1 },
+        { key: 'lighting_2', label: 'Pencahayaan 2', value: formData.lighting2 },
+        { key: 'lighting_3', label: 'Pencahayaan 3', value: formData.lighting3 },
+        { key: 'pm25_1', label: 'PM 2.5 ke-1', value: formData.pm25_1 },
+        { key: 'pm25_2', label: 'PM 2.5 ke-2', value: formData.pm25_2 },
+        { key: 'pm25_3', label: 'PM 2.5 ke-3', value: formData.pm25_3 },
+        { key: 'pm10_1', label: 'PM 10 ke-1', value: formData.pm10_1 },
+        { key: 'pm10_2', label: 'PM 10 ke-2', value: formData.pm10_2 },
+        { key: 'pm10_3', label: 'PM 10 ke-3', value: formData.pm10_3 },
+        { key: 'ventilation_rate_1', label: 'Ventilasi 1', value: formData.ventilationRate1 },
+        { key: 'ventilation_rate_2', label: 'Ventilasi 2', value: formData.ventilationRate2 },
+        { key: 'ventilation_rate_3', label: 'Ventilasi 3', value: formData.ventilationRate3 },
+      ]
+      const parsed: Record<string, number | null> = {}
+      for (const field of numericFields) {
+        const result = parseUjiUdaraNumber(field.value)
+        if (result === 'invalid') {
+          setError(`Nilai ${field.label} harus berupa angka (koma desimal boleh, mis. 25,5).`)
+          setSubmitting(false)
+          return
+        }
+        parsed[field.key] = result
+      }
+      const basePayload = {
         location_id: formData.locationId,
         test_date: formData.testDate,
-        officer_id: profile.id,
-        temperature_1: formData.temperature1 ? parseFloat(formData.temperature1) : null,
-        temperature_2: formData.temperature2 ? parseFloat(formData.temperature2) : null,
-        temperature_3: formData.temperature3 ? parseFloat(formData.temperature3) : null,
+        temperature_1: parsed.temperature_1,
+        temperature_2: parsed.temperature_2,
+        temperature_3: parsed.temperature_3,
         temperature_unit: formData.temperatureUnit,
-        humidity_1: formData.humidity1 ? parseFloat(formData.humidity1) : null,
-        humidity_2: formData.humidity2 ? parseFloat(formData.humidity2) : null,
-        humidity_3: formData.humidity3 ? parseFloat(formData.humidity3) : null,
-        noise_1: formData.noise1 ? parseFloat(formData.noise1) : null,
-        noise_2: formData.noise2 ? parseFloat(formData.noise2) : null,
-        noise_3: formData.noise3 ? parseFloat(formData.noise3) : null,
-        lighting_1: formData.lighting1 ? parseFloat(formData.lighting1) : null,
-        lighting_2: formData.lighting2 ? parseFloat(formData.lighting2) : null,
-        lighting_3: formData.lighting3 ? parseFloat(formData.lighting3) : null,
-        pm25_1: formData.pm25_1 ? parseFloat(formData.pm25_1) : null,
-        pm25_2: formData.pm25_2 ? parseFloat(formData.pm25_2) : null,
-        pm25_3: formData.pm25_3 ? parseFloat(formData.pm25_3) : null,
-        pm10_1: formData.pm10_1 ? parseFloat(formData.pm10_1) : null,
-        pm10_2: formData.pm10_2 ? parseFloat(formData.pm10_2) : null,
-        pm10_3: formData.pm10_3 ? parseFloat(formData.pm10_3) : null,
-        ventilation_rate_1: formData.ventilationRate1 ? parseFloat(formData.ventilationRate1) : null,
-        ventilation_rate_2: formData.ventilationRate2 ? parseFloat(formData.ventilationRate2) : null,
-        ventilation_rate_3: formData.ventilationRate3 ? parseFloat(formData.ventilationRate3) : null,
+        humidity_1: parsed.humidity_1,
+        humidity_2: parsed.humidity_2,
+        humidity_3: parsed.humidity_3,
+        noise_1: parsed.noise_1,
+        noise_2: parsed.noise_2,
+        noise_3: parsed.noise_3,
+        lighting_1: parsed.lighting_1,
+        lighting_2: parsed.lighting_2,
+        lighting_3: parsed.lighting_3,
+        pm25_1: parsed.pm25_1,
+        pm25_2: parsed.pm25_2,
+        pm25_3: parsed.pm25_3,
+        pm10_1: parsed.pm10_1,
+        pm10_2: parsed.pm10_2,
+        pm10_3: parsed.pm10_3,
+        ventilation_rate_1: parsed.ventilation_rate_1,
+        ventilation_rate_2: parsed.ventilation_rate_2,
+        ventilation_rate_3: parsed.ventilation_rate_3,
         notes: formData.notes || null,
       }
+      // officer_id hanya di-set saat insert; saat edit pertahankan pemilik asli.
+      const payload = editing ? basePayload : { ...basePayload, officer_id: profile.id }
 
       let result
       if (editing) {
@@ -4794,9 +5188,9 @@ function UjiUdaraPage({ profile, locations, kelurahan, airTests, setAirTests }: 
 
     {!formOpen && tests.length > 0 && (
       <>
-        {/* Filter Lokasi & Pencarian */}
+        {/* Filter Lokasi, Tanggal & Pencarian */}
         <div className="form-section" style={{ padding: '16px', marginBottom: '20px' }}>
-          <div className="form-grid" style={{ gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px', margin: 0 }}>
+          <div className="filter-grid cols-3" style={{ gap: '16px', margin: 0 }}>
             <label>Filter Kelurahan
               <select 
                 value={filterKelurahanId} 
@@ -4806,7 +5200,22 @@ function UjiUdaraPage({ profile, locations, kelurahan, airTests, setAirTests }: 
                 {kelurahan.map(k => <option key={k.id} value={k.id}>{k.name}</option>)}
               </select>
             </label>
-            <label>Pencarian
+            <label>Tanggal Awal
+              <input
+                type="date"
+                value={filterStart}
+                onChange={(e) => setFilterStart(e.target.value)}
+              />
+            </label>
+            <label>Tanggal Akhir
+              <input
+                type="date"
+                value={filterEnd}
+                onChange={(e) => setFilterEnd(e.target.value)}
+                min={filterStart || undefined}
+              />
+            </label>
+            <label className="span-all">Pencarian
               <input 
                 type="text" 
                 value={searchQuery} 
@@ -4817,11 +5226,14 @@ function UjiUdaraPage({ profile, locations, kelurahan, airTests, setAirTests }: 
             <div style={{ display: 'flex', alignItems: 'flex-end' }}>
               <button 
                 className="secondary" 
-                onClick={() => { setFilterKelurahanId(''); setSearchQuery('') }}
+                onClick={() => { setFilterKelurahanId(''); setFilterStart(defaultFilterStart()); setFilterEnd(defaultFilterEnd()); setSearchQuery('') }}
                 style={{ width: '100%' }}
               >
                 Reset Filter
               </button>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'flex-end' }}>
+              <span style={{ color: 'var(--muted)', fontSize: '13px' }}>Menampilkan {filteredTests.length} dari {tests.length} data</span>
             </div>
           </div>
         </div>
@@ -4843,6 +5255,9 @@ function UjiUdaraPage({ profile, locations, kelurahan, airTests, setAirTests }: 
             </tr>
           </thead>
           <tbody>
+            {filteredTests.length === 0 && (
+              <tr><td colSpan={11} style={{ textAlign: 'center', padding: '24px', color: 'var(--muted)' }}>Tidak ada data pada periode/filter yang dipilih. Ubah filter tanggal atau klik Reset Filter.</td></tr>
+            )}
             {filteredTests.map((test, index) => {
               const locationInfo = getLocationInfo(test.locationId)
               return (
@@ -4859,8 +5274,8 @@ function UjiUdaraPage({ profile, locations, kelurahan, airTests, setAirTests }: 
                 <td className={hasEmptyUjiUdaraValues([test.ventilationRate1, test.ventilationRate2, test.ventilationRate3]) ? 'uji-udara-empty-cell' : undefined}>{formatUjiUdaraValues([test.ventilationRate1, test.ventilationRate2, test.ventilationRate3])}</td>
                 <td>
                   <div className="entry-actions">
-                    <button className="text-button" onClick={() => openForm(test)} type="button">Edit</button>
-                    <button className="text-button" onClick={() => remove(test)} type="button">Hapus</button>
+                    <button className="text-button btn-edit" onClick={() => openForm(test)} type="button">Edit</button>
+                    <button className="text-button btn-delete" onClick={() => remove(test)} type="button">Hapus</button>
                   </div>
                 </td>
               </tr>
@@ -4911,7 +5326,7 @@ function LoginPage() {
     <form className="auth-card" onSubmit={submit} style={{ position: 'relative', zIndex: 1 }}>
       <img className="brand-logo large" src="/Aset/logo-sigesit-mark.png" alt="Logo SIGESIT Sadakeling" />
       <h1>SIGESIT<span className="brand-sub">SADAKELING</span></h1>
-      <p>Masuk untuk mengelola pendataan SADAKELING PKM PADASUKA - KOTA CIMAHI.</p>
+      <p>Masuk untuk mengelola pendataan SIGESIT SADAKELING - KOTA CIMAHI.</p>
       {error && <div className="auth-error">{error}</div>}
       <label>Email<input autoComplete="username" name="email" required type="email" /></label>
       <label>
@@ -4951,6 +5366,7 @@ function LoginPage() {
         </div>
       </label>
       <button className="primary" disabled={submitting} type="submit">{submitting ? 'Memproses…' : 'Masuk'}</button>
+      <p className="auth-copy">Copyright : Januari 2026</p>
     </form>
   </main>
 }
@@ -5130,17 +5546,9 @@ function PenggunaPage({ kelurahan, rw, rt, currentUserId }: { kelurahan: Region[
     if (invokeError || resultError) { setError(resultError ?? functionError ?? 'Gagal menyimpan pengguna.'); return }
     
     if (!editing) {
-      // Store generated password for display in list
-      const { data: newUser } = await supabase.from('profiles').select('id').eq('username', username).single()
-      if (newUser) {
-        await supabase.from('profiles').update({ last_password: password }).eq('id', newUser.id)
-      }
+      // Kredensial hanya ditampilkan sekali di sini; tidak disimpan ke database.
       // Show generated credentials
       alert(`User berhasil dibuat!\n\nUsername: ${username}\nPassword: ${password}\n\nSimpan credentials ini untuk user.`)
-    }
-
-    if (editing && password) {
-      await supabase.from('profiles').update({ last_password: password }).eq('id', editing.id)
     }
     
     setFormOpen(false)
@@ -5166,19 +5574,21 @@ function PenggunaPage({ kelurahan, rw, rt, currentUserId }: { kelurahan: Region[
 
   async function regeneratePassword(user: UserProfile) {
     if (!supabase) return
-    if (!window.confirm(`Generate password baru untuk ${user.fullName}? Password lama akan diganti.`)) return
-    
+    if (!window.confirm(`Reset password untuk ${user.fullName}?\n\nPassword lama langsung diganti dan user wajib membuat password baru saat login berikutnya.`)) return
+
     const newPassword = generatePassword()
     const { error: invokeError } = await invokeAdminUsers({ action: 'update', id: user.id, password: newPassword })
-    
-    if (invokeError) { 
-      window.alert(await getFunctionErrorMessage(invokeError) ?? 'Gagal generate password.'); 
-      return 
+
+    if (invokeError) {
+      window.alert(await getFunctionErrorMessage(invokeError) ?? 'Gagal generate password.');
+      return
     }
 
-    await supabase.from('profiles').update({ last_password: newPassword }).eq('id', user.id)
+    // Tandai sebagai password sementara agar user wajib menggantinya saat login
+    // berikutnya. Kredensial baru hanya ditampilkan sekali via alert; tidak disimpan.
+    await supabase.from('profiles').update({ is_temp_password: true }).eq('id', user.id)
     void loadUsers()
-    alert(`Password baru berhasil digenerate!\n\nUsername: ${user.username}\nPassword: ${newPassword}\n\nSimpan credentials ini untuk user.`)
+    alert(`Password berhasil direset untuk ${user.fullName}!\n\nUsername: ${user.username}\nPassword sementara: ${newPassword}\n\nBerikan ke user. User akan diminta mengganti password ini saat login.`)
   }
 
   const rwOptions = rw.filter((item) => item.kelurahanId === selectedKelurahanId)
@@ -5212,7 +5622,7 @@ function PenggunaPage({ kelurahan, rw, rt, currentUserId }: { kelurahan: Region[
   }
   const adminModules = MODULES.filter((m) => m.key !== 'pengguna')
 
-  return <section className="master-page">
+  return <section className="master-page pengguna-page">
     <div className="page-heading">
       <div><p className="eyebrow">DATA MASTER</p><h1>Pengguna Kader & Relawan</h1><p>Kelola akun kader, relawan, dan admin yang dapat mengakses SIGESIT.</p></div>
       <button className="primary" onClick={() => openForm()} type="button">+ Tambah pengguna</button>
@@ -5265,25 +5675,31 @@ function PenggunaPage({ kelurahan, rw, rt, currentUserId }: { kelurahan: Region[
       </div>
       <div className="form-actions"><button className="secondary" onClick={() => setFormOpen(false)} type="button">Kembali</button><button className="primary" disabled={submitting} type="submit">{submitting ? 'Menyimpan…' : 'Simpan'}</button></div>
     </form>}
-    <div className="user-toolbar">
-      <label>
-        <span>Filter Kelurahan</span>
-        <select onChange={(event) => setFilterKelurahanId(event.target.value)} value={filterKelurahanId}>
-          <option value="">Semua kelurahan</option>
-          {kelurahan.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
-        </select>
-      </label>
-      <label>
-        <span>Pencarian bebas</span>
-        <input
-          onChange={(event) => setSearchTerm(event.target.value)}
-          placeholder="Cari nama, username, NIK, HP, email, RW, RT..."
-          type="search"
-          value={searchTerm}
-        />
-      </label>
+    <div className="user-list-head">
+      <div className="user-toolbar">
+        <label>
+          <span>Filter Kelurahan</span>
+          <select onChange={(event) => setFilterKelurahanId(event.target.value)} value={filterKelurahanId}>
+            <option value="">Semua kelurahan</option>
+            {kelurahan.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+          </select>
+        </label>
+        <label>
+          <span>Pencarian bebas</span>
+          <input
+            onChange={(event) => setSearchTerm(event.target.value)}
+            placeholder="Cari nama, username, NIK, HP, email, RW, RT..."
+            type="search"
+            value={searchTerm}
+          />
+        </label>
+      </div>
+      <p className="user-toolbar-summary">Menampilkan {filteredUsers.length} dari {users.length} pengguna</p>
+      <div className="user-col-head" aria-hidden="true">
+        <span>Pengguna</span>
+        <span>Aksi</span>
+      </div>
     </div>
-    <p className="user-toolbar-summary">Menampilkan {filteredUsers.length} dari {users.length} pengguna</p>
     <div className="region-list">
       {error && <div className="error-message" style={{ marginBottom: '16px' }}>{error}</div>}
       {loading ? <div className="empty-state"><span>♙</span><h2>Memuat data pengguna…</h2></div> : users.length === 0 ? <div className="empty-state"><span>♙</span><h2>Belum ada pengguna</h2><p>Tambahkan akun kader atau admin untuk mulai mengelola akses.</p></div> : filteredUsers.length === 0 ? <div className="empty-state"><span>⌕</span><h2>Pengguna tidak ditemukan</h2><p>Ubah filter kelurahan atau kata kunci pencarian.</p></div> : filteredUsers.map((user) => <article className="region-row user-row" key={user.id}>
@@ -5296,7 +5712,6 @@ function PenggunaPage({ kelurahan, rw, rt, currentUserId }: { kelurahan: Region[
           <small>
             Username: {user.username}
             {` · No. Telp: ${user.phone || '-'}`}
-            {` · Password: ${user.lastPassword || 'tidak tercatat'}`}
             {user.email && ` · ${user.email}`}
           </small>
           <small className="user-region">
@@ -5309,10 +5724,10 @@ function PenggunaPage({ kelurahan, rw, rt, currentUserId }: { kelurahan: Region[
           </div>
         </div>
         <div className="row-actions">
-          <button className="edit-button" onClick={() => openForm(user)} type="button">Edit</button>
-          <button className="secondary" onClick={() => regeneratePassword(user)} type="button">Password</button>
+          <button className="edit-button btn-edit" onClick={() => openForm(user)} type="button">Edit</button>
+          <button className="secondary btn-reset" onClick={() => regeneratePassword(user)} type="button">Reset Password</button>
           <button className="secondary" onClick={() => toggleActive(user)} type="button">{user.isActive ? 'Nonaktifkan' : 'Aktifkan'}</button>
-          <button className="delete-button" onClick={() => removeUser(user)} type="button">Hapus</button>
+          <button className="delete-button btn-delete" onClick={() => removeUser(user)} type="button">Hapus</button>
         </div>
       </article>)}
     </div>
@@ -5333,6 +5748,8 @@ function PanganPage({ profile, kelurahan, rw, rt, foodInspections, setFoodInspec
   const [groupTppList, setGroupTppList] = useState<GroupTpp[]>([])
   const [formOpen, setFormOpen] = useState(false)
   const [filterKelurahanId, setFilterKelurahanId] = useState('')
+  const [filterStart, setFilterStart] = useState(defaultFilterStart)
+  const [filterEnd, setFilterEnd] = useState(defaultFilterEnd)
   const [searchKeyword, setSearchKeyword] = useState('')
   const [editing, setEditing] = useState<FoodInspectionResult | null>(null)
   const [submitting, setSubmitting] = useState(false)
@@ -5422,6 +5839,20 @@ function PanganPage({ profile, kelurahan, rw, rt, foodInspections, setFoodInspec
   useEffect(() => { void loadGroupTpp() }, [])
   useEffect(() => { if (profile) void loadInspections() }, [profile])
 
+  // Default kelurahan form bisa basi (id dummy pra-load) bila daftar wilayah
+  // tiba belakangan. Selaraskan ke data terbaru selama form tambah baru dibuka.
+  useEffect(() => {
+    if (formOpen && editing) return
+    setFormData((prev) => {
+      if (prev.kelurahanId && kelurahan.some((k) => k.id === prev.kelurahanId)) return prev
+      const def = profile?.kelurahanId && kelurahan.some((k) => k.id === profile.kelurahanId)
+        ? profile.kelurahanId
+        : (kelurahan[0]?.id || '')
+      if (def === prev.kelurahanId) return prev
+      return { ...prev, kelurahanId: def, rwId: '', rtId: '' }
+    })
+  }, [kelurahan, profile?.kelurahanId, formOpen, editing])
+
   function openForm(inspection?: FoodInspectionResult) {
     setEditing(inspection ?? null)
     setError('')
@@ -5482,9 +5913,12 @@ function PanganPage({ profile, kelurahan, rw, rt, foodInspections, setFoodInspec
       penanggung_jawab: formData.penanggungJawab || null,
       phone: formData.phone || null,
       hasil_ikl: formData.hasilIkl || null,
-      officer_id: profile.id,
+      // Kolom legacy untuk kompatibilitas: isi dari sampel pertama agar tidak NULL.
+      e_coli_result: formData.samples[0]?.eColi || null,
       samples: samplesPayload,
     }
+    // officer_id hanya di-set saat insert; saat edit pertahankan pemilik asli.
+    if (!editing) payload.officer_id = profile.id
     try {
       let result
       if (editing) {
@@ -5513,7 +5947,7 @@ function PanganPage({ profile, kelurahan, rw, rt, foodInspections, setFoodInspec
 
   function exportExcel() {
     if (filtered.length === 0) { window.alert('Tidak ada data hasil pemeriksaan untuk diexport.'); return }
-    const header = ['No', 'Tanggal', 'Hari', 'Jenis TPP', 'Kelurahan', 'RW', 'RT', 'Alamat', 'Penanggung Jawab', 'Phone', 'Hasil IKL', 'Jenis Makanan', 'Boraks', 'Formalin', 'Rodamin B', 'Metanil Yellow', 'E-coli', 'Keterangan', 'Status']
+    const header = ['No', 'Tanggal', 'Hari', 'Jenis TPP', 'Kelurahan', 'RW', 'RT', 'Alamat', 'Penanggung Jawab', 'Phone', 'Hasil IKL', 'Nama Sampel', 'Boraks', 'Formalin', 'Rodamin B', 'Metanil Yellow', 'E-coli', 'Keterangan', 'Status']
     const rows: (string | number | null)[][] = []
     filtered.forEach((item, idx) => {
       const tppName = item.jenisTppId ? groupTppList.find((g) => g.id === item.jenisTppId)?.name : undefined
@@ -5534,6 +5968,7 @@ function PanganPage({ profile, kelurahan, rw, rt, foodInspections, setFoodInspec
 
   const filtered = inspections.filter((item) => {
     if (filterKelurahanId && item.kelurahanId !== filterKelurahanId) return false
+    if (!inISODateRange(item.entryDate, filterStart, filterEnd)) return false
     if (searchKeyword) {
       const kw = searchKeyword.toLowerCase()
       const tppName = item.jenisTppId ? groupTppList.find((g) => g.id === item.jenisTppId)?.name : undefined
@@ -5613,7 +6048,7 @@ function PanganPage({ profile, kelurahan, rw, rt, foodInspections, setFoodInspec
         <h2>Sampel Makanan</h2>
         {formData.samples.map((s, idx) => (
           <div key={idx} className="form-grid" style={{ marginBottom: idx === formData.samples.length - 1 ? '8px' : '16px' }}>
-            <label><span className="entry-no">{idx + 1}.</span> Nama Makanan<input value={s.nama_makanan} onChange={(e) => updateSample(idx, { nama_makanan: e.target.value })} placeholder="Nama makanan/minuman" /></label>
+            <label><span className="entry-no">{idx + 1}.</span> Nama Sampel (Pangan/Air/dan sejenisnya)<input value={s.nama_makanan} onChange={(e) => updateSample(idx, { nama_makanan: e.target.value })} placeholder="Nama sampel pangan/air/dan sejenisnya" /></label>
             <label>Boraks
               <select value={s.boraks} onChange={(e) => updateSample(idx, { boraks: e.target.value as 'Positif' | 'Negatif' | '' })}>
                 <option value="">-</option>
@@ -5669,18 +6104,27 @@ function PanganPage({ profile, kelurahan, rw, rt, foodInspections, setFoodInspec
     {!formOpen && inspections.length > 0 && (
       <>
         <div className="form-section" style={{ padding: '16px', marginBottom: '20px' }}>
-          <div className="form-grid" style={{ gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px', margin: 0 }}>
+          <div className="filter-grid cols-3" style={{ gap: '16px', margin: 0 }}>
             <label>Filter Kelurahan
               <select value={filterKelurahanId} onChange={(e) => { setFilterKelurahanId(e.target.value) }}>
                 <option value="">Semua Kelurahan</option>
                 {kelurahan.map((k) => <option key={k.id} value={k.id}>{k.name}</option>)}
               </select>
             </label>
-            <label>Pencarian
-              <input type="text" value={searchKeyword} onChange={(e) => setSearchKeyword(e.target.value)} placeholder="Nama makanan / penanggung jawab..." />
+            <label>Tanggal Awal
+              <input type="date" value={filterStart} onChange={(e) => setFilterStart(e.target.value)} />
+            </label>
+            <label>Tanggal Akhir
+              <input type="date" value={filterEnd} onChange={(e) => setFilterEnd(e.target.value)} min={filterStart || undefined} />
+            </label>
+            <label className="span-all">Pencarian
+              <input type="text" value={searchKeyword} onChange={(e) => setSearchKeyword(e.target.value)} placeholder="Nama sampel / penanggung jawab..." />
             </label>
             <div style={{ display: 'flex', alignItems: 'flex-end' }}>
-              <button className="secondary" onClick={() => { setFilterKelurahanId(''); setSearchKeyword('') }} style={{ width: '100%' }}>Reset Filter</button>
+              <button className="secondary" onClick={() => { setFilterKelurahanId(''); setFilterStart(defaultFilterStart()); setFilterEnd(defaultFilterEnd()); setSearchKeyword('') }} style={{ width: '100%' }}>Reset Filter</button>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'flex-end' }}>
+              <span style={{ color: 'var(--muted)', fontSize: '13px' }}>Menampilkan {filtered.length} dari {inspections.length} data</span>
             </div>
           </div>
         </div>
@@ -5692,6 +6136,9 @@ function PanganPage({ profile, kelurahan, rw, rt, foodInspections, setFoodInspec
               </tr>
             </thead>
             <tbody>
+              {filtered.length === 0 && (
+                <tr><td colSpan={9} style={{ textAlign: 'center', padding: '24px', color: 'var(--muted)' }}>Tidak ada data pada periode/filter yang dipilih. Ubah filter tanggal atau klik Reset Filter.</td></tr>
+              )}
               {filtered.map((item, idx) => {
                 const kelName = item.kelurahanId ? kelurahan.find((k) => k.id === item.kelurahanId)?.name : undefined
                 const rwName = item.rwId ? rw.find((r) => r.id === item.rwId)?.name : undefined
@@ -5731,8 +6178,8 @@ function PanganPage({ profile, kelurahan, rw, rt, foodInspections, setFoodInspec
                     <td><span style={{ color: item.overallStatus === 'Lulus' ? '#16a34a' : '#b91c1c', fontWeight: 600 }}>{item.overallStatus || '-'}</span></td>
                     <td>
                       <div className="entry-actions">
-                        <button className="text-button" onClick={() => openForm(item)} type="button">Edit</button>
-                        <button className="text-button" onClick={() => remove(item)} type="button">Hapus</button>
+                        <button className="text-button btn-edit" onClick={() => openForm(item)} type="button">Edit</button>
+                        <button className="text-button btn-delete" onClick={() => remove(item)} type="button">Hapus</button>
                       </div>
                     </td>
                   </tr>
@@ -5869,7 +6316,7 @@ function GroupTppPage() {
 
       {!formOpen && groupTppList.length > 0 && (
         <div className="form-section" style={{ padding: '16px', marginBottom: '20px' }}>
-          <div className="form-grid" style={{ gridTemplateColumns: 'repeat(2, 1fr)', gap: '16px', margin: 0 }}>
+          <div className="filter-grid cols-2" style={{ gap: '16px', margin: 0 }}>
             <label>Pencarian
               <input type="text" value={searchKeyword} onChange={(e) => setSearchKeyword(e.target.value)} placeholder="Cari nama group/jenis..." />
             </label>
@@ -5905,8 +6352,8 @@ function GroupTppPage() {
                   <td>{item.name}</td>
                   <td>
                     <div className="entry-actions">
-                      <button className="text-button" onClick={() => openForm(item)} type="button">Edit</button>
-                      <button className="text-button" onClick={() => remove(item)} type="button">Hapus</button>
+                      <button className="text-button btn-edit" onClick={() => openForm(item)} type="button">Edit</button>
+                      <button className="text-button btn-delete" onClick={() => remove(item)} type="button">Hapus</button>
                     </div>
                   </td>
                 </tr>
@@ -6039,6 +6486,30 @@ function inDateRange(dateMs: number, range: DateRange): boolean {
   return true
 }
 
+// Default filter tanggal: tgl awal = tanggal 1 bulan berjalan, tgl akhir = hari ini (waktu lokal).
+function toLocalISODate(date: Date): string {
+  const y = date.getFullYear()
+  const m = String(date.getMonth() + 1).padStart(2, '0')
+  const d = String(date.getDate()).padStart(2, '0')
+  return `${y}-${m}-${d}`
+}
+
+function defaultFilterStart(): string {
+  const now = new Date()
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`
+}
+
+function defaultFilterEnd(): string {
+  return toLocalISODate(new Date())
+}
+
+// Filter tanggal untuk string 'YYYY-MM-DD' (uji air/udara/pangan). Batas kosong = tanpa batas.
+function inISODateRange(dateStr: string, start: string, end: string): boolean {
+  if (start && dateStr < start) return false
+  if (end && dateStr > end) return false
+  return true
+}
+
 function parseCsv(text: string): string[][] {
   const rows: string[][] = []
   let row: string[] = []
@@ -6101,8 +6572,8 @@ function LaporanPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [filterKelurahan, setFilterKelurahan] = useState('')
-  const [filterStart, setFilterStart] = useState('')
-  const [filterEnd, setFilterEnd] = useState('')
+  const [filterStart, setFilterStart] = useState(defaultFilterStart)
+  const [filterEnd, setFilterEnd] = useState(defaultFilterEnd)
   const [searchQuery, setSearchQuery] = useState('')
 
   const load = useCallback(async () => {
@@ -6198,7 +6669,7 @@ function LaporanPage() {
       </div>
 
       <div className="form-section" style={{ padding: '16px', marginBottom: '20px' }}>
-        <div className="form-grid" style={{ gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px', margin: 0 }}>
+        <div className="filter-grid cols-4" style={{ gap: '16px', margin: 0 }}>
           <label>Filter Kelurahan
             <select value={filterKelurahan} onChange={(e) => setFilterKelurahan(e.target.value)}>
               <option value="">Semua Kelurahan</option>
@@ -6214,6 +6685,10 @@ function LaporanPage() {
           <label>Pencarian
             <input type="text" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder="Cari pelapor, RW, atau lokasi jentik..." />
           </label>
+        </div>
+        <div style={{ display: 'flex', gap: '12px', alignItems: 'center', marginTop: '12px', flexWrap: 'wrap' }}>
+          <button className="secondary" onClick={() => { setFilterKelurahan(''); setFilterStart(defaultFilterStart()); setFilterEnd(defaultFilterEnd()); setSearchQuery('') }} type="button">Reset Filter</button>
+          <span style={{ color: 'var(--muted)', fontSize: '13px' }}>Menampilkan {filtered.length} dari {reports.length} laporan · Periode {filterStart || '-'} s/d {filterEnd || '-'}</span>
         </div>
       </div>
 
@@ -6327,8 +6802,8 @@ function LaporanDbdPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [filterKelurahan, setFilterKelurahan] = useState('')
-  const [filterStart, setFilterStart] = useState('')
-  const [filterEnd, setFilterEnd] = useState('')
+  const [filterStart, setFilterStart] = useState(defaultFilterStart)
+  const [filterEnd, setFilterEnd] = useState(defaultFilterEnd)
   const [searchQuery, setSearchQuery] = useState('')
 
   const load = useCallback(async () => {
@@ -6424,7 +6899,7 @@ function LaporanDbdPage() {
       </div>
 
       <div className="form-section" style={{ padding: '16px', marginBottom: '20px' }}>
-        <div className="form-grid" style={{ gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px', margin: 0 }}>
+        <div className="filter-grid cols-4" style={{ gap: '16px', margin: 0 }}>
           <label>Filter Kelurahan
             <select value={filterKelurahan} onChange={(e) => setFilterKelurahan(e.target.value)}>
               <option value="">Semua Kelurahan</option>
@@ -6440,6 +6915,10 @@ function LaporanDbdPage() {
           <label>Pencarian
             <input type="text" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder="Cari nama pasien, RS, atau gejala..." />
           </label>
+        </div>
+        <div style={{ display: 'flex', gap: '12px', alignItems: 'center', marginTop: '12px', flexWrap: 'wrap' }}>
+          <button className="secondary" onClick={() => { setFilterKelurahan(''); setFilterStart(defaultFilterStart()); setFilterEnd(defaultFilterEnd()); setSearchQuery('') }} type="button">Reset Filter</button>
+          <span style={{ color: 'var(--muted)', fontSize: '13px' }}>Menampilkan {filtered.length} dari {reports.length} laporan · Periode {filterStart || '-'} s/d {filterEnd || '-'}</span>
         </div>
       </div>
 

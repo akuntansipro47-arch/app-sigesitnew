@@ -2496,6 +2496,11 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
   // Filter rentang tanggal: default dari tgl 1 bulan berjalan s/d hari ini.
   const [filterStart, setFilterStart] = useState(defaultFilterStart)
   const [filterEnd, setFilterEnd] = useState(defaultFilterEnd)
+  // Filter wilayah cascading di tabel hasil: kelurahan -> RW -> RT
+  // (RW muncul mengikuti kelurahan terpilih; RT mengikuti RW + kelurahan).
+  const [filterKelurahanId, setFilterKelurahanId] = useState('')
+  const [filterRwId, setFilterRwId] = useState('')
+  const [filterRtId, setFilterRtId] = useState('')
 
   // Filter regions based on user profile.
   // Kader terkunci pada wilayahnya; super_admin/admin bebas memilih wilayah apapun.
@@ -2511,6 +2516,21 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
                   const rwItem = rw.find(rw => rw.id === r.rwId)
                   return rwItem?.kelurahanId === profile.kelurahanId
                 }) : rt
+
+  // Opsi filter cascading: daftar RW mengikuti kelurahan terpilih,
+  // daftar RT mengikuti RW terpilih (dan kelurahan induknya).
+  const filterRwOptions = filterKelurahanId
+    ? userRw.filter((item) => item.kelurahanId === filterKelurahanId)
+    : userRw
+  const filterRtOptions = (() => {
+    let list = userRt
+    if (filterKelurahanId) {
+      const rwIdSet = new Set(filterRwOptions.map((item) => item.id))
+      list = list.filter((item) => item.rwId && rwIdSet.has(item.rwId))
+    }
+    if (filterRwId) list = list.filter((item) => item.rwId === filterRwId)
+    return list
+  })()
 
   const [selectedKelurahanId, setSelectedKelurahanId] = useState(scopeByProfile ? profile?.kelurahanId || '' : '')
   const [selectedRwId, setSelectedRwId] = useState(scopeByProfile ? profile?.rwId || '' : '')
@@ -2692,8 +2712,11 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
     void loadEntries()
   }, [profile])
 
-  // Filter entries by date range + search keyword
+  // Filter entries by wilayah + rentang tanggal + search keyword
   const filteredEntries = entries.filter(entry => {
+    if (filterKelurahanId && entry.kelurahanId !== filterKelurahanId) return false
+    if (filterRwId && entry.rwId !== filterRwId) return false
+    if (filterRtId && entry.rtId !== filterRtId) return false
     if (!inISODateRange(entry.entryDate, filterStart, filterEnd)) return false
     if (!searchKeyword.trim()) return true
     const kw = searchKeyword.toLowerCase()
@@ -3452,6 +3475,35 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
                 placeholder="Cari nomor entry, tanggal, lokasi, KK, nama, atau NIK..." 
               />
             </label>
+            <label>Kelurahan
+              <select
+                value={filterKelurahanId}
+                onChange={(e) => { setFilterKelurahanId(e.target.value); setFilterRwId(''); setFilterRtId('') }}
+              >
+                <option value="">Semua Kelurahan</option>
+                {userKelurahan.map(k => <option key={k.id} value={k.id}>{k.name}</option>)}
+              </select>
+            </label>
+            <label>RW
+              <select
+                value={filterRwId}
+                onChange={(e) => { setFilterRwId(e.target.value); setFilterRtId('') }}
+                disabled={!filterKelurahanId}
+              >
+                <option value="">{filterKelurahanId ? 'Semua RW' : 'Pilih kelurahan terlebih dahulu'}</option>
+                {filterRwOptions.map(r => <option key={r.id} value={r.id}>RW {r.name}</option>)}
+              </select>
+            </label>
+            <label>RT
+              <select
+                value={filterRtId}
+                onChange={(e) => setFilterRtId(e.target.value)}
+                disabled={!filterKelurahanId}
+              >
+                <option value="">{filterKelurahanId ? 'Semua RT' : 'Pilih kelurahan terlebih dahulu'}</option>
+                {filterRtOptions.map(r => <option key={r.id} value={r.id}>RT {r.name}</option>)}
+              </select>
+            </label>
             <label>Tanggal Awal
               <input type="date" value={filterStart} onChange={(e) => setFilterStart(e.target.value)} />
             </label>
@@ -3461,7 +3513,14 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
             <div style={{ display: 'flex', alignItems: 'flex-end' }}>
               <button 
                 className="secondary" 
-                onClick={() => { setSearchKeyword(''); setFilterStart(defaultFilterStart()); setFilterEnd(defaultFilterEnd()) }}
+                onClick={() => {
+                  setSearchKeyword('')
+                  setFilterKelurahanId('')
+                  setFilterRwId('')
+                  setFilterRtId('')
+                  setFilterStart(defaultFilterStart())
+                  setFilterEnd(defaultFilterEnd())
+                }}
                 style={{ width: '100%' }}
               >
                 Reset Filter

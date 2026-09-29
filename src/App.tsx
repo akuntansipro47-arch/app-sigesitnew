@@ -2450,27 +2450,38 @@ function downloadEntryImportTemplate() {
   XLSX.writeFile(wb, 'template_import_entry.xlsx')
 }
 
-// Ambil semua baris tanpa terpotong limit default 1000/query: daftar id
-// dipecah per chunk (URL .in() yang terlalu panjang bisa gagal) dan tiap
-// chunk dipaginasi dengan .range(). Dipakai pemuatan batch entry.
+// Ambil semua baris tanpa terpotong limit default 1000/query.
+// Daftar id dipecah per chunk (URL .in() terlalu panjang bisa gagal); tiap
+// chunk dihitung totalnya lalu seluruh halaman diambil PARALEL sehingga
+// 25rb+ baris tidak membutuhkan puluhan request berurutan.
 async function fetchInBatches<T>(table: string, column: string, ids: string[], batchSize = 100): Promise<T[]> {
   if (!supabase || ids.length === 0) return []
   const client = supabase
-  const all: T[] = []
   const pageSize = 1000
-  for (let i = 0; i < ids.length; i += batchSize) {
-    const chunk = ids.slice(i, i + batchSize)
-    let from = 0
-    for (;;) {
-      const { data, error } = await client.from(table).select('*').in(column, chunk).range(from, from + pageSize - 1)
-      if (error) throw error
-      const rows = (data ?? []) as T[]
-      all.push(...rows)
-      if (rows.length < pageSize) break
-      from += pageSize
+  const chunks: string[][] = []
+  for (let i = 0; i < ids.length; i += batchSize) chunks.push(ids.slice(i, i + batchSize))
+
+  const perChunk = await Promise.all(chunks.map(async (chunk): Promise<T[]> => {
+    const { count, error: countError } = await client
+      .from(table).select('*', { count: 'exact', head: true }).in(column, chunk)
+    if (countError) throw countError
+    const total = count ?? 0
+    if (total === 0) return []
+    const pages = Math.ceil(total / pageSize)
+    const pageResults = await Promise.all(
+      Array.from({ length: pages }, (_, page) => {
+        const from = page * pageSize
+        return client.from(table).select('*').in(column, chunk).range(from, from + pageSize - 1)
+      }),
+    )
+    const rows: T[] = []
+    for (const res of pageResults) {
+      if (res.error) throw res.error
+      rows.push(...((res.data ?? []) as T[]))
     }
-  }
-  return all
+    return rows
+  }))
+  return perChunk.flat()
 }
 
 function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null; kelurahan: Region[]; rw: Region[]; rt: Region[] }) {
@@ -2569,20 +2580,14 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
         return
       }
       const entryIds = data.map((e: any) => e.id)
-      // Batch-load semua family cards (chunk + paginasi agar tak terpotong limit)
+      // Hanya family cards yang dibutuhkan daftar; jawaban kuesioner dimuat
+      // terpisah saat form edit dibuka (lazy-load) agar daftar ringan walau
+      // jumlah jawaban puluhan ribu baris.
       let fcArray: any[] = []
       try {
         fcArray = await fetchInBatches('family_cards', 'entry_id', entryIds)
       } catch (fcError) {
         console.error('Error loading family cards:', fcError)
-      }
-      const fcIds = fcArray.map((fc: any) => fc.id)
-      // Batch-load semua questionnaire responses (chunk + paginasi)
-      let qrArray: any[] = []
-      try {
-        qrArray = await fetchInBatches('questionnaire_responses', 'family_card_id', fcIds)
-      } catch (qrError) {
-        console.error('Error loading questionnaire responses:', qrError)
       }
       // Group family cards by entry_id
       const fcByEntryId = new Map<string, typeof fcArray>()
@@ -2591,29 +2596,11 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
         arr.push(fc)
         fcByEntryId.set(fc.entry_id, arr)
       })
-      // Group questionnaire responses by family_card_id
-      const qrByFcId = new Map<string, typeof qrArray>()
-      qrArray.forEach((qr: any) => {
-        const arr = qrByFcId.get(qr.family_card_id) || []
-        arr.push(qr)
-        qrByFcId.set(qr.family_card_id, arr)
-      })
-      // Map entries with proper camelCase conversion and grouped relations
+      // Map entries with proper camelCase conversion and grouped relations.
+      // Jawaban kuesioner sengaja TIDAK dimuat di daftar (dipakai hanya saat
+      // form edit dibuka, sudah di-lazy-load di openForm).
       const entriesWithDetails: Entry[] = data.map((entry: any) => {
         const fcs = fcByEntryId.get(entry.id) || []
-        const allQr: QuestionnaireResponse[] = []
-        fcs.forEach((fc: any) => {
-          const fcrs = qrByFcId.get(fc.id) || []
-          fcrs.forEach((qr: any) => {
-            allQr.push({
-              id: qr.id,
-              familyCardId: qr.family_card_id,
-              pillar: qr.pillar,
-              questionCode: qr.question_code,
-              answer: qr.answer
-            })
-          })
-        })
         return {
           id: entry.id,
           entryNumber: entry.entry_number,
@@ -2634,7 +2621,7 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
             jiwaMenetap: fc.jiwa_menetap,
             jambanCount: fc.jamban_count
           })),
-          questionnaireResponses: allQr
+          questionnaireResponses: []
         }
       })
       setEntries(entriesWithDetails)
@@ -2970,14 +2957,17 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
     setSelectedKelurahanId(entry?.kelurahanId || (lockWilayah ? profile?.kelurahanId || '' : ''))
     setSelectedRwId(entry?.rwId || (lockWilayah ? profile?.rwId || '' : ''))
     setSelectedRtId(entry?.rtId || (lockWilayah ? profile?.rtId || '' : ''))
-    setFamilyCards(entry?.familyCards || [])
-    setQuestionnaireResponses(normalizeSingleChoiceResponses(entry?.questionnaireResponses || []))
     setCurrentKkIndex(0)
-    setFormOpen(true)
-    if (!entry) { void getNextEntryNumber(); return }
-    // Muat ulang detail entry dari server agar form edit selalu menampilkan
-    // data terbaru, tidak tergantung kelengkapan batch di daftar.
-    if (!supabase) return
+    if (!entry) {
+      setFamilyCards([])
+      setQuestionnaireResponses([])
+      setFormOpen(true)
+      void getNextEntryNumber()
+      return
+    }
+    // Muat detail dari server SEBELUM form dibuka agar jawaban kuesioner
+    // langsung utuh saat tampil (daftar tidak lagi menyimpan jawaban).
+    if (!supabase) { window.alert('Koneksi Supabase belum tersedia.'); return }
     try {
       const { data: fcs, error: fcErr } = await supabase
         .from('family_cards').select('*').eq('entry_id', entry.id).order('kk_sequence')
@@ -3010,8 +3000,11 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
       }
       setFamilyCards(cards)
       setQuestionnaireResponses(normalizeSingleChoiceResponses(responses))
+      setFormOpen(true)
     } catch (loadErr) {
-      console.warn('Gagal memuat ulang detail entry, memakai data daftar:', loadErr)
+      console.error('Gagal memuat detail entry untuk edit:', loadErr)
+      // Alert supaya pesan tidak menempel di state error (yang menutupi halaman setelah form ditutup).
+      window.alert(`Gagal memuat jawaban kuesioner entry ini: ${loadErr instanceof Error ? loadErr.message : 'koneksi bermasalah'}. Coba lagi.`)
     }
   }
 

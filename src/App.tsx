@@ -2450,6 +2450,29 @@ function downloadEntryImportTemplate() {
   XLSX.writeFile(wb, 'template_import_entry.xlsx')
 }
 
+// Ambil semua baris tanpa terpotong limit default 1000/query: daftar id
+// dipecah per chunk (URL .in() yang terlalu panjang bisa gagal) dan tiap
+// chunk dipaginasi dengan .range(). Dipakai pemuatan batch entry.
+async function fetchInBatches<T>(table: string, column: string, ids: string[], batchSize = 100): Promise<T[]> {
+  if (!supabase || ids.length === 0) return []
+  const client = supabase
+  const all: T[] = []
+  const pageSize = 1000
+  for (let i = 0; i < ids.length; i += batchSize) {
+    const chunk = ids.slice(i, i + batchSize)
+    let from = 0
+    for (;;) {
+      const { data, error } = await client.from(table).select('*').in(column, chunk).range(from, from + pageSize - 1)
+      if (error) throw error
+      const rows = (data ?? []) as T[]
+      all.push(...rows)
+      if (rows.length < pageSize) break
+      from += pageSize
+    }
+  }
+  return all
+}
+
 function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null; kelurahan: Region[]; rw: Region[]; rt: Region[] }) {
   const [entries, setEntries] = useState<Entry[]>([])
   const [loading, setLoading] = useState(true)
@@ -2546,21 +2569,21 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
         return
       }
       const entryIds = data.map((e: any) => e.id)
-      // Batch-load all family cards in a single query (fixes N+1)
-      const { data: fcData, error: fcError } = await supabase
-        .from('family_cards')
-        .select('*')
-        .in('entry_id', entryIds)
-      if (fcError) console.error('Error loading family cards:', fcError)
-      const fcArray = fcData || []
+      // Batch-load semua family cards (chunk + paginasi agar tak terpotong limit)
+      let fcArray: any[] = []
+      try {
+        fcArray = await fetchInBatches('family_cards', 'entry_id', entryIds)
+      } catch (fcError) {
+        console.error('Error loading family cards:', fcError)
+      }
       const fcIds = fcArray.map((fc: any) => fc.id)
-      // Batch-load all questionnaire responses in a single query
-      const { data: qrData, error: qrError } = await supabase
-        .from('questionnaire_responses')
-        .select('*')
-        .in('family_card_id', fcIds.length > 0 ? fcIds : [''])
-      if (qrError) console.error('Error loading questionnaire responses:', qrError)
-      const qrArray = qrData || []
+      // Batch-load semua questionnaire responses (chunk + paginasi)
+      let qrArray: any[] = []
+      try {
+        qrArray = await fetchInBatches('questionnaire_responses', 'family_card_id', fcIds)
+      } catch (qrError) {
+        console.error('Error loading questionnaire responses:', qrError)
+      }
       // Group family cards by entry_id
       const fcByEntryId = new Map<string, typeof fcArray>()
       fcArray.forEach((fc: any) => {
@@ -2940,7 +2963,7 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
     }
   }
 
-  function openForm(entry?: Entry) {
+  async function openForm(entry?: Entry) {
     setEditing(entry ?? null)
     setError('')
     const lockWilayah = profile?.role === 'kader'
@@ -2951,7 +2974,45 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
     setQuestionnaireResponses(normalizeSingleChoiceResponses(entry?.questionnaireResponses || []))
     setCurrentKkIndex(0)
     setFormOpen(true)
-    if (!entry) void getNextEntryNumber()
+    if (!entry) { void getNextEntryNumber(); return }
+    // Muat ulang detail entry dari server agar form edit selalu menampilkan
+    // data terbaru, tidak tergantung kelengkapan batch di daftar.
+    if (!supabase) return
+    try {
+      const { data: fcs, error: fcErr } = await supabase
+        .from('family_cards').select('*').eq('entry_id', entry.id).order('kk_sequence')
+      if (fcErr) throw fcErr
+      const cards: FamilyCard[] = ((fcs ?? []) as any[]).map((fc: any) => ({
+        id: fc.id,
+        entryId: fc.entry_id,
+        kkSequence: fc.kk_sequence,
+        kkNumber: fc.kk_number,
+        nikKepalaKeluarga: fc.nik_kepala_keluarga || '',
+        kepalaKeluarga: fc.kepala_keluarga || '',
+        address: fc.address,
+        totalJiwa: fc.total_jiwa,
+        jiwaMenetap: fc.jiwa_menetap,
+        jambanCount: fc.jamban_count,
+      }))
+      const cardIds = cards.map((c) => c.id)
+      let responses: QuestionnaireResponse[] = []
+      if (cardIds.length > 0) {
+        const { data: qrs, error: qrErr } = await supabase
+          .from('questionnaire_responses').select('*').in('family_card_id', cardIds)
+        if (qrErr) throw qrErr
+        responses = ((qrs ?? []) as any[]).map((qr: any) => ({
+          id: qr.id,
+          familyCardId: qr.family_card_id,
+          pillar: qr.pillar,
+          questionCode: qr.question_code,
+          answer: qr.answer,
+        }))
+      }
+      setFamilyCards(cards)
+      setQuestionnaireResponses(normalizeSingleChoiceResponses(responses))
+    } catch (loadErr) {
+      console.warn('Gagal memuat ulang detail entry, memakai data daftar:', loadErr)
+    }
   }
 
   function addFamilyCard() {

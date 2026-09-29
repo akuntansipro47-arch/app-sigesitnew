@@ -2395,8 +2395,18 @@ function parseImportInt(raw: unknown): number | null {
 // menyimpan "01". Samakan dengan perbandingan eksak dulu, lalu fallback
 // tanpa-nol-depan agar "1" tetap cocok dengan "01".
 function normalizeRegionNumber(raw: string): string {
-  const stripped = raw.trim().replace(/^0+/, '')
+  const stripped = cleanImportText(raw).replace(/^0+/, '')
   return stripped === '' ? '0' : stripped
+}
+
+// Data copy-paste ke Excel sering membawa karakter tak terlihat (zero-width
+// space U+200B-U+200D, BOM U+FEFF, NBSP) yang membuat pencocokan nama gagal
+// walau terlihat sama. Bersihkan dulu sebelum dibandingkan.
+function cleanImportText(raw: unknown): string {
+  return String(raw ?? '')
+    .replace(/[\u200B-\u200D\uFEFF]/g, '')
+    .replace(/\u00A0/g, ' ')
+    .trim()
 }
 
 function downloadEntryImportTemplate() {
@@ -2405,15 +2415,15 @@ function downloadEntryImportTemplate() {
   const dataHeader = [...IMPORT_BASE_HEADERS, ...codes]
   const dataWs = XLSX.utils.aoa_to_sheet([dataHeader])
   dataWs['!cols'] = [...IMPORT_BASE_HEADERS.map(() => ({ wch: 22 })), ...codes.map(() => ({ wch: 24 }))]
-  const exampleA = ['2026-09-25', 'Padasuka', '05', '01', '1', '3273010101010001', '3273010101010001', 'Contoh Kepala Keluarga 1', 'Jl. Contoh No. 1', 4, 4, 1]
-  const exampleB = ['2026-09-25', 'Padasuka', '05', '01', '1', '3273010101010002', '3273010101010002', 'Contoh Kepala Keluarga 2', 'Jl. Contoh No. 2', 3, 3, 1]
+  const exampleA = ['2026-09-25', 'Padasuka', '5', '1', '1', '3273010101010001', '3273010101010001', 'Contoh Kepala Keluarga 1', 'Jl. Contoh No. 1', 4, 4, 1]
+  const exampleB = ['2026-09-25', 'Padasuka', '5', '1', '1', '3273010101010002', '3273010101010002', 'Contoh Kepala Keluarga 2', 'Jl. Contoh No. 2', 3, 3, 1]
   const exampleWs = XLSX.utils.aoa_to_sheet([dataHeader, exampleA, exampleB])
   exampleWs['!cols'] = dataWs['!cols']
   const panduanHeader = ['Kode Kolom', 'Pilar', 'Pertanyaan', 'Cara Isi']
   const panduanRows: (string | number)[][] = [
     ['Tanggal (YYYY-MM-DD)', '-', '-', 'Wajib. Format YYYY-MM-DD, mis. 2026-09-25'],
     ['Kelurahan', '-', '-', 'Wajib. Nama persis seperti di menu Wilayah'],
-    ['RW / RT', '-', '-', 'Wajib. Nomor persis seperti di menu Wilayah (format sel: Teks, agar "01" tidak berubah menjadi "1")'],
+    ['RW / RT', '-', '-', 'Wajib. Nomor seperti di menu Wilayah; "01" atau "1" sama-sama diterima (format sel: Teks)'],
     ['Kelompok Entry', '-', '-', 'Opsional. Samakan angkanya bila beberapa KK adalah 1 kunjungan/entry. Kosongkan bila tiap baris adalah entry sendiri'],
     ['No KK (16 digit)', '-', '-', 'Wajib. Angka, maksimal 16 digit'],
     ['NIK Kepala Keluarga', '-', '-', 'Opsional. Angka, maksimal 16 digit'],
@@ -2753,19 +2763,19 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
       const prefix = `Baris ${rowNum}:`
       const entryDate = parseImportDate(cell(rowArray, 'Tanggal (YYYY-MM-DD)'))
       if (!entryDate) { errors.push(`${prefix} Tanggal tidak valid (format YYYY-MM-DD).`); return }
-      const kelName = String(cell(rowArray, 'Kelurahan')).trim().toLowerCase()
-      const kel = kelurahan.find((k) => k.name.trim().toLowerCase() === kelName)
+      const kelName = cleanImportText(cell(rowArray, 'Kelurahan')).toLowerCase()
+      const kel = kelurahan.find((k) => cleanImportText(k.name).toLowerCase() === kelName)
       if (!kel) { errors.push(`${prefix} Kelurahan tidak ditemukan.`); return }
       if (isKader && profile?.kelurahanId && kel.id !== profile.kelurahanId) { errors.push(`${prefix} di luar wilayah Anda.`); return }
-      const rwName = String(cell(rowArray, 'RW')).trim()
+      const rwName = cleanImportText(cell(rowArray, 'RW'))
       const rwInKel = rw.filter((w) => w.kelurahanId === kel.id)
-      const rwItem = rwInKel.find((w) => w.name.trim() === rwName)
+      const rwItem = rwInKel.find((w) => cleanImportText(w.name) === rwName)
         ?? rwInKel.find((w) => normalizeRegionNumber(w.name) === normalizeRegionNumber(rwName))
       if (!rwItem) { errors.push(`${prefix} RW "${rwName || '-'}" tidak ditemukan di kelurahan ${kel.name}. Pastikan format sel RW di Excel adalah Teks bila memakai nol depan (mis. "01").`); return }
       if (isKader && profile?.rwId && rwItem.id !== profile.rwId) { errors.push(`${prefix} di luar wilayah Anda.`); return }
-      const rtName = String(cell(rowArray, 'RT')).trim()
+      const rtName = cleanImportText(cell(rowArray, 'RT'))
       const rtInRw = rt.filter((t) => t.rwId === rwItem.id)
-      const rtItem = rtInRw.find((t) => t.name.trim() === rtName)
+      const rtItem = rtInRw.find((t) => cleanImportText(t.name) === rtName)
         ?? rtInRw.find((t) => normalizeRegionNumber(t.name) === normalizeRegionNumber(rtName))
       if (!rtItem) { errors.push(`${prefix} RT "${rtName || '-'}" tidak ditemukan di RW tersebut. Pastikan format sel RT di Excel adalah Teks bila memakai nol depan (mis. "01").`); return }
       if (isKader && profile?.rtId && rtItem.id !== profile.rtId) { errors.push(`${prefix} di luar wilayah Anda.`); return }

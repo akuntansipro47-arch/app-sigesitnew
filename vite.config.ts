@@ -5,6 +5,9 @@ import { VitePWA } from 'vite-plugin-pwa'
 const BUILD_VERSION = Date.now().toString(36).toUpperCase()
 
 export default defineConfig({
+  define: {
+    __APP_VERSION__: JSON.stringify(BUILD_VERSION),
+  },
   plugins: [
     react(),
     VitePWA({

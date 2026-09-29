@@ -1170,7 +1170,7 @@ function App() {
         <img className="brand-logo" src="/Aset/logo-sigesit-mark.png" alt="Logo SIGESIT Sadakeling" />
         <div><strong>SIGESIT SADAKELING {pkmName}</strong></div>
       </div>
-      <div className="topbar-actions"><span className="topbar-copy">Copyright : Januari 2026</span><button className={`connection ${online ? 'online' : 'offline'}`} onClick={() => setOnline(!online)} type="button"><i />{online ? 'Terhubung' : 'Offline'}</button><button className="avatar" type="button" aria-label={`Profil ${displayName}`}>{initials || 'SZ'}</button>{session && <button className="logout" onClick={() => { void supabase?.auth.signOut() }} type="button">Keluar</button>}</div>
+      <div className="topbar-actions"><span className="topbar-copy">Copyright : Januari 2026</span><span className="topbar-version" title="Versi build aplikasi">v{typeof __APP_VERSION__ === 'string' ? __APP_VERSION__ : 'dev'}</span><button className={`connection ${online ? 'online' : 'offline'}`} onClick={() => setOnline(!online)} type="button"><i />{online ? 'Terhubung' : 'Offline'}</button><button className="avatar" type="button" aria-label={`Profil ${displayName}`}>{initials || 'SZ'}</button>{session && <button className="logout" onClick={() => { void supabase?.auth.signOut() }} type="button">Keluar</button>}</div>
     </header>
     <section className="workspace">
       <aside className="sidebar">

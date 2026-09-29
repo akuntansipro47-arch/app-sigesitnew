@@ -2390,6 +2390,15 @@ function parseImportInt(raw: unknown): number | null {
   return Number.isSafeInteger(value) ? value : null
 }
 
+// Nomor RW/RT di Excel rawan kehilangan nol depan: sel General berisi "01"
+// disimpan Excel sebagai angka 1 dan terbaca sebagai "1", sementara database
+// menyimpan "01". Samakan dengan perbandingan eksak dulu, lalu fallback
+// tanpa-nol-depan agar "1" tetap cocok dengan "01".
+function normalizeRegionNumber(raw: string): string {
+  const stripped = raw.trim().replace(/^0+/, '')
+  return stripped === '' ? '0' : stripped
+}
+
 function downloadEntryImportTemplate() {
   const codeToPillar = importQuestionPillar()
   const codes = Object.keys(codeToPillar)
@@ -2404,7 +2413,7 @@ function downloadEntryImportTemplate() {
   const panduanRows: (string | number)[][] = [
     ['Tanggal (YYYY-MM-DD)', '-', '-', 'Wajib. Format YYYY-MM-DD, mis. 2026-09-25'],
     ['Kelurahan', '-', '-', 'Wajib. Nama persis seperti di menu Wilayah'],
-    ['RW / RT', '-', '-', 'Wajib. Nomor persis seperti di menu Wilayah'],
+    ['RW / RT', '-', '-', 'Wajib. Nomor persis seperti di menu Wilayah (format sel: Teks, agar "01" tidak berubah menjadi "1")'],
     ['Kelompok Entry', '-', '-', 'Opsional. Samakan angkanya bila beberapa KK adalah 1 kunjungan/entry. Kosongkan bila tiap baris adalah entry sendiri'],
     ['No KK (16 digit)', '-', '-', 'Wajib. Angka, maksimal 16 digit'],
     ['NIK Kepala Keluarga', '-', '-', 'Opsional. Angka, maksimal 16 digit'],
@@ -2749,12 +2758,16 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
       if (!kel) { errors.push(`${prefix} Kelurahan tidak ditemukan.`); return }
       if (isKader && profile?.kelurahanId && kel.id !== profile.kelurahanId) { errors.push(`${prefix} di luar wilayah Anda.`); return }
       const rwName = String(cell(rowArray, 'RW')).trim()
-      const rwItem = rw.find((w) => w.kelurahanId === kel.id && w.name.trim() === rwName)
-      if (!rwItem) { errors.push(`${prefix} RW tidak ditemukan di kelurahan tersebut.`); return }
+      const rwInKel = rw.filter((w) => w.kelurahanId === kel.id)
+      const rwItem = rwInKel.find((w) => w.name.trim() === rwName)
+        ?? rwInKel.find((w) => normalizeRegionNumber(w.name) === normalizeRegionNumber(rwName))
+      if (!rwItem) { errors.push(`${prefix} RW "${rwName || '-'}" tidak ditemukan di kelurahan ${kel.name}. Pastikan format sel RW di Excel adalah Teks bila memakai nol depan (mis. "01").`); return }
       if (isKader && profile?.rwId && rwItem.id !== profile.rwId) { errors.push(`${prefix} di luar wilayah Anda.`); return }
       const rtName = String(cell(rowArray, 'RT')).trim()
-      const rtItem = rt.find((t) => t.rwId === rwItem.id && t.name.trim() === rtName)
-      if (!rtItem) { errors.push(`${prefix} RT tidak ditemukan di RW tersebut.`); return }
+      const rtInRw = rt.filter((t) => t.rwId === rwItem.id)
+      const rtItem = rtInRw.find((t) => t.name.trim() === rtName)
+        ?? rtInRw.find((t) => normalizeRegionNumber(t.name) === normalizeRegionNumber(rtName))
+      if (!rtItem) { errors.push(`${prefix} RT "${rtName || '-'}" tidak ditemukan di RW tersebut. Pastikan format sel RT di Excel adalah Teks bila memakai nol depan (mis. "01").`); return }
       if (isKader && profile?.rtId && rtItem.id !== profile.rtId) { errors.push(`${prefix} di luar wilayah Anda.`); return }
       const kkNumber = String(cell(rowArray, 'No KK (16 digit)')).replace(/\D/g, '').slice(0, 16)
       if (!kkNumber) { errors.push(`${prefix} No KK wajib diisi (angka, maks 16 digit).`); return }

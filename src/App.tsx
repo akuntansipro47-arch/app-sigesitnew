@@ -2493,7 +2493,10 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
   const [error, setError] = useState('')
   const [nextEntryNumber, setNextEntryNumber] = useState(1)
   const [searchKeyword, setSearchKeyword] = useState('')
-  
+  // Filter rentang tanggal: default dari tgl 1 bulan berjalan s/d hari ini.
+  const [filterStart, setFilterStart] = useState(defaultFilterStart)
+  const [filterEnd, setFilterEnd] = useState(defaultFilterEnd)
+
   // Filter regions based on user profile.
   // Kader terkunci pada wilayahnya; super_admin/admin bebas memilih wilayah apapun.
   const scopeByProfile = profile?.role === 'kader'
@@ -2689,8 +2692,9 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
     void loadEntries()
   }, [profile])
 
-  // Filter entries based on search keyword
+  // Filter entries by date range + search keyword
   const filteredEntries = entries.filter(entry => {
+    if (!inISODateRange(entry.entryDate, filterStart, filterEnd)) return false
     if (!searchKeyword.trim()) return true
     const kw = searchKeyword.toLowerCase()
     const kelName = kelurahan.find(k => k.id === entry.kelurahanId)?.name || ''
@@ -3437,9 +3441,9 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
 
     {!formOpen && entries.length > 0 && (
       <>
-        {/* Filter Pencarian */}
+        {/* Filter Pencarian & Rentang Tanggal */}
         <div className="form-section" style={{ padding: '16px', marginBottom: '20px' }}>
-          <div className="filter-grid cols-2" style={{ gap: '16px', margin: 0 }}>
+          <div className="filter-grid cols-4" style={{ gap: '16px', margin: 0 }}>
             <label>Pencarian
               <input 
                 type="text" 
@@ -3448,14 +3452,23 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
                 placeholder="Cari nomor entry, tanggal, lokasi, KK, nama, atau NIK..." 
               />
             </label>
+            <label>Tanggal Awal
+              <input type="date" value={filterStart} onChange={(e) => setFilterStart(e.target.value)} />
+            </label>
+            <label>Tanggal Akhir
+              <input type="date" value={filterEnd} onChange={(e) => setFilterEnd(e.target.value)} min={filterStart || undefined} />
+            </label>
             <div style={{ display: 'flex', alignItems: 'flex-end' }}>
               <button 
                 className="secondary" 
-                onClick={() => setSearchKeyword('')}
+                onClick={() => { setSearchKeyword(''); setFilterStart(defaultFilterStart()); setFilterEnd(defaultFilterEnd()) }}
                 style={{ width: '100%' }}
               >
-                Reset Pencarian
+                Reset Filter
               </button>
+            </div>
+            <div style={{ gridColumn: '1 / -1', color: 'var(--muted)', fontSize: '13px' }}>
+              Menampilkan {filteredEntries.length} dari {entries.length} data
             </div>
           </div>
         </div>
@@ -3478,6 +3491,9 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
               </tr>
             </thead>
             <tbody>
+              {filteredEntries.length === 0 && (
+                <tr><td colSpan={12} style={{ textAlign: 'center', padding: '24px', color: 'var(--muted)' }}>Tidak ada data pada rentang tanggal / pencarian ini.</td></tr>
+              )}
               {filteredEntries.map((entry, index) => {
                 const kelName = kelurahan.find(k => k.id === entry.kelurahanId)?.name || '-'
                 const rwName = entry.rwId ? rw.find(r => r.id === entry.rwId)?.name : undefined

@@ -2347,8 +2347,13 @@ type ImportAnswer = { pillar: string; code: string; answer: boolean }
 type ImportCard = { rowNum: number; kkNumber: string; nik: string; name: string; address: string; totalJiwa: number; jiwaMenetap: number; jambanCount: number; answers: ImportAnswer[] }
 type ImportGroup = { key: string; entryDate: string; kelurahanId: string; rwId: string; rtId: string; cards: ImportCard[]; warnings: string[] }
 
-// Pilar single-choice di form (hanya boleh 1 jawaban Ya, sisanya dianggap Tidak)
-const IMPORT_SINGLE_CHOICE_PILLARS = ['jamban', 'sumber_air']
+// Pilar single-choice di form (hanya boleh 1 jawaban Ya, sisanya dianggap Tidak).
+// Catatan: 'sumber_air' SENGAJA tidak masuk daftar ini. Pilar tersebut berisi
+// jenis sumber air (saling lepas) SEKALIGUS praktik pengolahan/penyimpanan
+// (air_diolah, air_disimpan_tertutup, makanan_tertutup, pisah_b3,
+// 5_kunci_pangan, ...) yang sah dinilai Ya bersamaan. Memaksakan single-choice
+// di seluruh pilar pernah membuang ribuan jawaban Ya valid saat import.
+const IMPORT_SINGLE_CHOICE_PILLARS = ['jamban']
 
 function importQuestionPillar(): Record<string, string> {
   const map: Record<string, string> = {}
@@ -2501,7 +2506,9 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
   const [currentKkIndex, setCurrentKkIndex] = useState(0)
 
   function isSingleChoiceQuestionnaire(pillar: string) {
-    return pillar === 'jamban' || pillar === 'sumber_air'
+    // Hanya 'jamban' yang benar-benar saling lepas (jenis pembuangan tinja).
+    // 'sumber_air' mencakup praktik independen sehingga memakai checkbox.
+    return pillar === 'jamban'
   }
 
   function normalizeSingleChoiceResponses(responses: QuestionnaireResponse[]) {

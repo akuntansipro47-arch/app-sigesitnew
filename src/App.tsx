@@ -2515,6 +2515,36 @@ async function fetchAllRows<T>(
   return rows
 }
 
+// Hapus entry beserta kartu keluarga & jawaban kuesionernya. Anak-baris dihapus
+// lebih dulu agar aman walau FK di database tidak memakai ON DELETE CASCADE.
+// Id diproses per batch agar URL .in() tidak terlalu panjang.
+async function deleteEntriesById(ids: string[]): Promise<string[]> {
+  if (!supabase || ids.length === 0) return []
+  const failures: string[] = []
+  for (let i = 0; i < ids.length; i += 50) {
+    const batch = ids.slice(i, i + 50)
+    try {
+      const { data: cards, error: cardsErr } = await supabase
+        .from('family_cards').select('id').in('entry_id', batch)
+      if (cardsErr) throw cardsErr
+      const cardIds = (cards ?? []).map((card: any) => card.id)
+      for (let j = 0; j < cardIds.length; j += 100) {
+        const cardBatch = cardIds.slice(j, j + 100)
+        const { error: qrErr } = await supabase
+          .from('questionnaire_responses').delete().in('family_card_id', cardBatch)
+        if (qrErr) throw qrErr
+      }
+      const { error: fcErr } = await supabase.from('family_cards').delete().in('entry_id', batch)
+      if (fcErr) throw fcErr
+      const { error: entryErr } = await supabase.from('entries').delete().in('id', batch)
+      if (entryErr) throw entryErr
+    } catch (err) {
+      failures.push(err instanceof Error ? err.message : String(err))
+    }
+  }
+  return failures
+}
+
 function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null; kelurahan: Region[]; rw: Region[]; rt: Region[] }) {
   const [entries, setEntries] = useState<Entry[]>([])
   const [loading, setLoading] = useState(true)
@@ -2534,6 +2564,10 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
   const [filterRtId, setFilterRtId] = useState('')
   // Pagination tabel hasil: 1.000 baris per halaman.
   const [tablePage, setTablePage] = useState(1)
+  // Hapus massal (multi-select baris) — hanya untuk level super_admin.
+  const canBulkDelete = profile?.role === 'super_admin'
+  const [selectedEntryIds, setSelectedEntryIds] = useState<string[]>([])
+  const [bulkDeleting, setBulkDeleting] = useState(false)
 
   // Filter regions based on user profile.
   // Kader terkunci pada wilayahnya; super_admin/admin bebas memilih wilayah apapun.
@@ -2788,11 +2822,46 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
   // berubah otomatis kembali ke halaman 1 supaya data hasil pencarian
   // langsung tampil.
   const ENTRY_PAGE_SIZE = 1000
-  useEffect(() => { setTablePage(1) }, [searchKeyword, filterStart, filterEnd, filterKelurahanId, filterRwId, filterRtId])
+  useEffect(() => { setTablePage(1); setSelectedEntryIds([]) }, [searchKeyword, filterStart, filterEnd, filterKelurahanId, filterRwId, filterRtId])
   const totalPages = Math.max(1, Math.ceil(filteredEntries.length / ENTRY_PAGE_SIZE))
   const safePage = Math.min(tablePage, totalPages)
   const pageStartIndex = (safePage - 1) * ENTRY_PAGE_SIZE
   const pageEntries = filteredEntries.slice(pageStartIndex, pageStartIndex + ENTRY_PAGE_SIZE)
+
+  // Multi-select: pilih per baris atau seluruh baris halaman aktif.
+  const pageAllSelected = pageEntries.length > 0 && pageEntries.every((entry) => selectedEntryIds.includes(entry.id))
+  const selectedSet = new Set(selectedEntryIds)
+
+  function toggleSelectEntry(entryId: string) {
+    setSelectedEntryIds((prev) => prev.includes(entryId) ? prev.filter((id) => id !== entryId) : [...prev, entryId])
+  }
+
+  function toggleSelectPage() {
+    const pageIds = pageEntries.map((entry) => entry.id)
+    setSelectedEntryIds((prev) => pageAllSelected
+      ? prev.filter((id) => !pageIds.includes(id))
+      : Array.from(new Set([...prev, ...pageIds])))
+  }
+
+  // Hapus massal: dikerjakan per batch 100 id agar URL .in() tetap aman.
+  async function deleteSelectedEntries() {
+    if (!canBulkDelete || selectedEntryIds.length === 0 || !supabase) return
+    const total = selectedEntryIds.length
+    if (!window.confirm(`Hapus ${total} entry terpilih beserta kartu keluarga & jawaban kuesionernya? Tindakan ini tidak bisa dibatalkan.`)) return
+    setBulkDeleting(true)
+    const ids = [...selectedEntryIds]
+    let failures: string[] = []
+    try {
+      failures = await deleteEntriesById(ids)
+    } catch (err) {
+      failures = [err instanceof Error ? err.message : 'koneksi bermasalah']
+    } finally {
+      setBulkDeleting(false)
+    }
+    setSelectedEntryIds([])
+    if (failures.length > 0) window.alert(`Sebagian gagal menghapus: ${failures.join('; ')}`)
+    void loadEntries()
+  }
 
   function exportExcel() {
     if (filteredEntries.length === 0) { window.alert('Tidak ada data entry untuk diexport.'); return }
@@ -3291,9 +3360,9 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
     if (!window.confirm(`Hapus entry nomor ${entry.entryNumber}?`)) return
     if (!supabase) return
 
-    const { error } = await supabase.from('entries').delete().eq('id', entry.id)
-    if (error) {
-      window.alert(`Gagal menghapus entry: ${error.message}`)
+    const failures = await deleteEntriesById([entry.id])
+    if (failures.length > 0) {
+      window.alert(`Gagal menghapus entry: ${failures.join('; ')}`)
       return
     }
     void loadEntries()
@@ -3594,12 +3663,41 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
                 <button className="secondary" type="button" disabled={safePage >= totalPages} onClick={() => setTablePage(safePage + 1)}>Berikutnya →</button>
               </div>
             )}
+            {canBulkDelete && (
+              <div style={{ gridColumn: '1 / -1', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap', background: selectedEntryIds.length > 0 ? '#fef2f2' : 'transparent', border: selectedEntryIds.length > 0 ? '1px solid #fecaca' : '1px dashed var(--line)', borderRadius: '8px', padding: '10px 14px' }}>
+                <span style={{ fontSize: '13px', fontWeight: 600, color: selectedEntryIds.length > 0 ? '#b91c1c' : 'var(--muted)' }}>
+                  Mode hapus massal (Super Admin): {selectedEntryIds.length > 0 ? `${selectedEntryIds.length} baris dipilih` : 'centang baris yang akan dihapus'}
+                </span>
+                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                  <button className="secondary" type="button" disabled={bulkDeleting || selectedEntryIds.length === 0} onClick={() => setSelectedEntryIds([])}>Bersihkan Pilihan</button>
+                  <button
+                    className="secondary"
+                    type="button"
+                    disabled={bulkDeleting || selectedEntryIds.length === 0}
+                    onClick={() => void deleteSelectedEntries()}
+                    style={{ color: '#b91c1c', borderColor: '#fca5a5', fontWeight: 700 }}
+                  >
+                    {bulkDeleting ? 'Menghapus…' : `Hapus Terpilih (${selectedEntryIds.length})`}
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
         <div className="data-table-container">
           <table className="data-table entry-results-table">
             <thead>
               <tr>
+                {canBulkDelete && (
+                  <th style={{ width: '40px' }}>
+                    <input
+                      type="checkbox"
+                      checked={pageAllSelected}
+                      onChange={() => toggleSelectPage()}
+                      aria-label="Pilih semua baris di halaman ini"
+                    />
+                  </th>
+                )}
                 <th style={{ width: '50px' }}>No</th>
                 <th>Nomor Entry</th>
                 <th>Tanggal</th>
@@ -3616,7 +3714,7 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
             </thead>
             <tbody>
               {filteredEntries.length === 0 && (
-                <tr><td colSpan={12} style={{ textAlign: 'center', padding: '24px', color: 'var(--muted)' }}>Tidak ada data pada rentang tanggal / pencarian ini.</td></tr>
+                <tr><td colSpan={canBulkDelete ? 13 : 12} style={{ textAlign: 'center', padding: '24px', color: 'var(--muted)' }}>Tidak ada data pada rentang tanggal / pencarian ini.</td></tr>
               )}
               {pageEntries.map((entry, index) => {
                 const kelName = kelurahan.find(k => k.id === entry.kelurahanId)?.name || '-'
@@ -3630,6 +3728,16 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
                 return (
                   <Fragment key={entry.id}>
                   <tr>
+                    {canBulkDelete && (
+                      <td style={{ textAlign: 'center' }}>
+                        <input
+                          type="checkbox"
+                          checked={selectedSet.has(entry.id)}
+                          onChange={() => toggleSelectEntry(entry.id)}
+                          aria-label={`Pilih entry ${entry.entryNumber}`}
+                        />
+                      </td>
+                    )}
                     <td style={{ textAlign: 'center', fontWeight: 600 }}>{pageStartIndex + index + 1}</td>
                     <td style={{ textAlign: 'center', fontWeight: 600 }}>{entry.entryNumber || '-'}</td>
                     <td>{entry.entryDate}</td>
@@ -3669,7 +3777,7 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
                   </tr>
                   {isExpanded && extraKkCount > 0 && (
                     <tr className="sub-kk-row">
-                      <td colSpan={12}>
+                      <td colSpan={canBulkDelete ? 13 : 12}>
                         <div className="sub-kk-list">
                           {entry.familyCards.map((fc, fcIndex) => (
                             <div className="sub-kk-item" key={fc.id || `${entry.id}-kk-${fcIndex}`}>

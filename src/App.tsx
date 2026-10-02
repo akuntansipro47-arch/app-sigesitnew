@@ -2501,6 +2501,8 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
   const [filterKelurahanId, setFilterKelurahanId] = useState('')
   const [filterRwId, setFilterRwId] = useState('')
   const [filterRtId, setFilterRtId] = useState('')
+  // Pagination tabel hasil: 1.000 baris per halaman.
+  const [tablePage, setTablePage] = useState(1)
 
   // Filter regions based on user profile.
   // Kader terkunci pada wilayahnya; super_admin/admin bebas memilih wilayah apapun.
@@ -2587,10 +2589,25 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
     }
     setLoading(true)
     try {
-      let entriesQuery = supabase.from('entries').select('*')
-      if (profile.role === 'kader') entriesQuery = entriesQuery.eq('officer_id', profile.id)
-      const { data, error } = await entriesQuery.order('entry_date', { ascending: false })
-      console.log('loadEntries result:', { data, error: error?.message })
+      // Ambil SEMUA baris: Supabase membatasi 1.000 baris per query, jadi
+      // halaman data diambil berjenjang sampai habis agar tidak terpotong.
+      const pageSize = 1000
+      const data: any[] = []
+      let loadError: { message: string } | null = null
+      for (let from = 0; ; from += pageSize) {
+        let pageQuery = supabase.from('entries').select('*')
+        if (profile.role === 'kader') pageQuery = pageQuery.eq('officer_id', profile.id)
+        const pageRes = await pageQuery
+          .order('entry_date', { ascending: false })
+          .order('entry_number', { ascending: false })
+          .range(from, from + pageSize - 1)
+        if (pageRes.error) { loadError = pageRes.error; break }
+        const rows = pageRes.data ?? []
+        data.push(...rows)
+        if (rows.length < pageSize) break
+      }
+      const error = loadError
+      console.log('loadEntries result:', { rows: data.length, error: error?.message })
       if (error) {
         console.error('Error loading entries:', error)
         setError(`Gagal memuat data: ${error.message}`)
@@ -2735,6 +2752,16 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
       || firstKk?.kkNumber.toLowerCase().includes(kw)
       || firstKk?.nikKepalaKeluarga.toLowerCase().includes(kw)
   })
+
+  // Pagination tabel hasil: 1.000 baris per halaman. Filter/apapun yang
+  // berubah otomatis kembali ke halaman 1 supaya data hasil pencarian
+  // langsung tampil.
+  const ENTRY_PAGE_SIZE = 1000
+  useEffect(() => { setTablePage(1) }, [searchKeyword, filterStart, filterEnd, filterKelurahanId, filterRwId, filterRtId])
+  const totalPages = Math.max(1, Math.ceil(filteredEntries.length / ENTRY_PAGE_SIZE))
+  const safePage = Math.min(tablePage, totalPages)
+  const pageStartIndex = (safePage - 1) * ENTRY_PAGE_SIZE
+  const pageEntries = filteredEntries.slice(pageStartIndex, pageStartIndex + ENTRY_PAGE_SIZE)
 
   function exportExcel() {
     if (filteredEntries.length === 0) { window.alert('Tidak ada data entry untuk diexport.'); return }
@@ -3527,8 +3554,15 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
               </button>
             </div>
             <div style={{ gridColumn: '1 / -1', color: 'var(--muted)', fontSize: '13px' }}>
-              Menampilkan {filteredEntries.length} dari {entries.length} data
+              Menampilkan {pageEntries.length > 0 ? `${pageStartIndex + 1}–${pageStartIndex + pageEntries.length} ` : ''}dari {filteredEntries.length} data hasil filter{filteredEntries.length !== entries.length ? ` (total ${entries.length} data)` : ''}{totalPages > 1 ? ` · Halaman ${safePage} dari ${totalPages}` : ''}
             </div>
+            {totalPages > 1 && (
+              <div style={{ gridColumn: '1 / -1', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '12px', flexWrap: 'wrap' }}>
+                <button className="secondary" type="button" disabled={safePage <= 1} onClick={() => setTablePage(safePage - 1)}>← Sebelumnya</button>
+                <span style={{ fontSize: '13px', color: 'var(--muted)' }}>Halaman {safePage} dari {totalPages} (per halaman {ENTRY_PAGE_SIZE} baris)</span>
+                <button className="secondary" type="button" disabled={safePage >= totalPages} onClick={() => setTablePage(safePage + 1)}>Berikutnya →</button>
+              </div>
+            )}
           </div>
         </div>
         <div className="data-table-container">
@@ -3553,7 +3587,7 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
               {filteredEntries.length === 0 && (
                 <tr><td colSpan={12} style={{ textAlign: 'center', padding: '24px', color: 'var(--muted)' }}>Tidak ada data pada rentang tanggal / pencarian ini.</td></tr>
               )}
-              {filteredEntries.map((entry, index) => {
+              {pageEntries.map((entry, index) => {
                 const kelName = kelurahan.find(k => k.id === entry.kelurahanId)?.name || '-'
                 const rwName = entry.rwId ? rw.find(r => r.id === entry.rwId)?.name : undefined
                 const rtName = entry.rtId ? rt.find(r => r.id === entry.rtId)?.name : undefined
@@ -3565,7 +3599,7 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
                 return (
                   <Fragment key={entry.id}>
                   <tr>
-                    <td style={{ textAlign: 'center', fontWeight: 600 }}>{index + 1}</td>
+                    <td style={{ textAlign: 'center', fontWeight: 600 }}>{pageStartIndex + index + 1}</td>
                     <td style={{ textAlign: 'center', fontWeight: 600 }}>{entry.entryNumber || '-'}</td>
                     <td>{entry.entryDate}</td>
                     <td style={{ fontWeight: 500 }}>{officerName(entry.officerId)}</td>
@@ -3622,6 +3656,13 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
               })}
             </tbody>
           </table>
+          {totalPages > 1 && (
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '12px', padding: '16px', flexWrap: 'wrap', borderTop: '1px solid var(--line)' }}>
+              <button className="secondary" type="button" disabled={safePage <= 1} onClick={() => { setTablePage(safePage - 1); window.scrollTo({ top: 0, behavior: 'smooth' }) }}>← Sebelumnya</button>
+              <span style={{ fontSize: '13px', color: 'var(--muted)' }}>Halaman {safePage} dari {totalPages}</span>
+              <button className="secondary" type="button" disabled={safePage >= totalPages} onClick={() => { setTablePage(safePage + 1); window.scrollTo({ top: 0, behavior: 'smooth' }) }}>Berikutnya →</button>
+            </div>
+          )}
         </div>
       </>
     )}

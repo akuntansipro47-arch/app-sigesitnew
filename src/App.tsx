@@ -737,15 +737,13 @@ function App() {
     if (!supabaseConfigured || !supabase || !profile) return
     try {
       console.log('Loading water quality tests for officer:', profile.id)
-      let waterQuery = supabase.from('water_quality_tests').select('*')
-      if (profile.role === 'kader') waterQuery = waterQuery.eq('officer_id', profile.id)
-      const { data, error } = await waterQuery.order('test_date', { ascending: false })
-      console.log('Load water quality tests result:', { data, error: error?.message, dataLength: data?.length })
-
-      if (error) {
-        console.error('Error loading water quality tests:', error)
-        return
-      }
+      const data = await fetchAllRows(
+        'water_quality_tests',
+        '*',
+        (q) => (profile.role === 'kader' ? q.eq('officer_id', profile.id) : q),
+        { column: 'test_date' },
+      )
+      console.log('Load water quality tests result:', { dataLength: data?.length })
 
       if (data && data.length > 0) {
         setWaterTests((data as WaterQualityTestRow[]).map(mapWaterQualityTestRow))
@@ -763,15 +761,13 @@ function App() {
     if (!supabaseConfigured || !supabase || !profile) return
     try {
       console.log('Loading air quality tests for officer:', profile.id)
-      let airQuery = supabase.from('air_quality_tests').select('*')
-      if (profile.role === 'kader') airQuery = airQuery.eq('officer_id', profile.id)
-      const { data, error } = await airQuery.order('test_date', { ascending: false })
-      console.log('Load air quality tests result:', { data, error: error?.message, dataLength: data?.length })
-
-      if (error) {
-        console.error('Error loading air quality tests:', error)
-        return
-      }
+      const data = await fetchAllRows(
+        'air_quality_tests',
+        '*',
+        (q) => (profile.role === 'kader' ? q.eq('officer_id', profile.id) : q),
+        { column: 'test_date' },
+      )
+      console.log('Load air quality tests result:', { dataLength: data?.length })
 
       if (data && data.length > 0) {
         setAirTests((data as AirQualityTestRow[]).map(mapAirQualityTestRow))
@@ -1708,11 +1704,14 @@ function Dashboard({ view, setView, access, profile, pkmInfo, kelurahan, locatio
       // 1) Entry data (jumlah rumah, KK, jiwa, jamban)
       jobs.push((async () => {
         try {
-          let query = db.from('entries').select('id, entry_number, entry_date, kelurahan_id, rw_id')
-          if (isKader && profileId) query = query.eq('officer_id', profileId)
-          const { data, error } = await query.order('entry_date', { ascending: false })
-          if (error) throw error
-          next.entries = (data ?? []).map((row: any) => ({
+          // Paginasi agar tidak terpotong limit 1.000 baris/query Supabase.
+          const rows = await fetchAllRows(
+            'entries',
+            'id, entry_number, entry_date, kelurahan_id, rw_id',
+            (q) => (isKader && profileId ? q.eq('officer_id', profileId) : q),
+            { column: 'entry_date' },
+          )
+          next.entries = rows.map((row: any) => ({
             id: String(row.id),
             entryNumber: Number(row.entry_number) || 0,
             entryDate: row.entry_date ?? '',
@@ -1720,12 +1719,10 @@ function Dashboard({ view, setView, access, profile, pkmInfo, kelurahan, locatio
             rwId: row.rw_id ?? '',
           }))
           if (next.entries.length > 0) {
-            const { data: cards, error: cardsError } = await db
-              .from('family_cards')
-              .select('entry_id, total_jiwa, jiwa_menetap, jamban_count')
-              .in('entry_id', next.entries.map((entry) => entry.id))
-            if (cardsError) throw cardsError
-            next.cards = (cards ?? []).map((row: any) => ({
+            // Dipecah per 100 id + dipaginasi; kirim 1.000+ id sekaligus membuat
+            // URL terlalu panjang dan menghasilkan error "Entry Data".
+            const cards = await fetchInBatches('family_cards', 'entry_id', next.entries.map((entry) => entry.id))
+            next.cards = cards.map((row: any) => ({
               entryId: String(row.entry_id ?? ''),
               totalJiwa: Number(row.total_jiwa) || 0,
               jiwaMenetap: Number(row.jiwa_menetap) || 0,
@@ -1740,11 +1737,13 @@ function Dashboard({ view, setView, access, profile, pkmInfo, kelurahan, locatio
       // 2) Uji kualitas air
       jobs.push((async () => {
         try {
-          let query = db.from('water_quality_tests').select('*')
-          if (isKader && profileId) query = query.eq('officer_id', profileId)
-          const { data, error } = await query.order('test_date', { ascending: false })
-          if (error) throw error
-          next.water = (data ?? []).map((row: any) => mapWaterQualityTestRow(row))
+          const rows = await fetchAllRows(
+            'water_quality_tests',
+            '*',
+            (q) => (isKader && profileId ? q.eq('officer_id', profileId) : q),
+            { column: 'test_date' },
+          )
+          next.water = rows.map((row: any) => mapWaterQualityTestRow(row))
         } catch {
           failed.push('Uji Air')
         }
@@ -1753,11 +1752,13 @@ function Dashboard({ view, setView, access, profile, pkmInfo, kelurahan, locatio
       // 3) Uji kualitas udara
       jobs.push((async () => {
         try {
-          let query = db.from('air_quality_tests').select('*')
-          if (isKader && profileId) query = query.eq('officer_id', profileId)
-          const { data, error } = await query.order('test_date', { ascending: false })
-          if (error) throw error
-          next.air = (data ?? []).map((row: any) => mapAirQualityTestRow(row))
+          const rows = await fetchAllRows(
+            'air_quality_tests',
+            '*',
+            (q) => (isKader && profileId ? q.eq('officer_id', profileId) : q),
+            { column: 'test_date' },
+          )
+          next.air = rows.map((row: any) => mapAirQualityTestRow(row))
         } catch {
           failed.push('Uji Udara')
         }
@@ -1766,11 +1767,13 @@ function Dashboard({ view, setView, access, profile, pkmInfo, kelurahan, locatio
       // 4) Hasil pemeriksaan pangan
       jobs.push((async () => {
         try {
-          let query = db.from('food_inspection_results').select('*')
-          if (isKader && profileId) query = query.eq('officer_id', profileId)
-          const { data, error } = await query.order('entry_date', { ascending: false })
-          if (error) throw error
-          next.food = (data ?? []).map((row: any) => mapFoodInspectionRow(row))
+          const rows = await fetchAllRows(
+            'food_inspection_results',
+            '*',
+            (q) => (isKader && profileId ? q.eq('officer_id', profileId) : q),
+            { column: 'entry_date' },
+          )
+          next.food = rows.map((row: any) => mapFoodInspectionRow(row))
         } catch {
           failed.push('Hasil Pangan')
         }
@@ -2482,6 +2485,34 @@ async function fetchInBatches<T>(table: string, column: string, ids: string[], b
     return rows
   }))
   return perChunk.flat()
+}
+
+// Ambil seluruh baris satu tabel dengan paginasi .range() sehingga tidak
+// terpotong batas default 1.000 baris per query Supabase. Tiebreaker 'id'
+// dipakai agar urutan stabil dan tidak ada baris terlewat/terduplikasi
+// antar halaman. `apply` dipakai untuk filter (mis. kader -> miliknya saja).
+async function fetchAllRows<T>(
+  table: string,
+  select = '*',
+  apply?: (q: any) => any,
+  order?: { column: string; ascending?: boolean },
+): Promise<T[]> {
+  if (!supabase) return []
+  const client = supabase
+  const pageSize = 1000
+  const rows: T[] = []
+  for (let from = 0; ; from += pageSize) {
+    let query = client.from(table).select(select)
+    if (apply) query = apply(query)
+    if (order?.column) query = query.order(order.column, { ascending: order.ascending ?? false })
+    query = query.order('id')
+    const { data, error } = await query.range(from, from + pageSize - 1)
+    if (error) throw error
+    const chunk = (data ?? []) as T[]
+    rows.push(...chunk)
+    if (chunk.length < pageSize) break
+  }
+  return rows
 }
 
 function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null; kelurahan: Region[]; rw: Region[]; rt: Region[] }) {
@@ -4464,17 +4495,13 @@ function UjiAirPage({ profile, locations, kelurahan, waterTests, setWaterTests }
     setLoading(true)
     try {
       console.log('Loading water quality tests for officer:', profile.id)
-      let waterQuery = supabase.from('water_quality_tests').select('*')
-      if (profile.role === 'kader') waterQuery = waterQuery.eq('officer_id', profile.id)
-      const { data, error: loadError } = await waterQuery.order('test_date', { ascending: false })
-      console.log('Load water quality tests result:', { data, error: loadError?.message, dataLength: data?.length })
-      
-      if (loadError) {
-        console.error('Error loading water quality tests:', loadError)
-        setError(`Gagal memuat data uji air: ${loadError.message}`)
-        setLoading(false)
-        return
-      }
+      const data = await fetchAllRows(
+        'water_quality_tests',
+        '*',
+        (q) => (profile.role === 'kader' ? q.eq('officer_id', profile.id) : q),
+        { column: 'test_date' },
+      )
+      console.log('Load water quality tests result:', { dataLength: data?.length })
       
       if (!data || data.length === 0) {
         console.log('No water quality tests found')
@@ -5056,17 +5083,13 @@ function UjiUdaraPage({ profile, locations, kelurahan, airTests, setAirTests }: 
     setLoading(true)
     try {
       console.log('Loading air quality tests for officer:', profile.id)
-      let airQuery = supabase.from('air_quality_tests').select('*')
-      if (profile.role === 'kader') airQuery = airQuery.eq('officer_id', profile.id)
-      const { data, error: loadError } = await airQuery.order('test_date', { ascending: false })
-      console.log('Load air quality tests result:', { data, error: loadError?.message, dataLength: data?.length })
-      
-      if (loadError) {
-        console.error('Error loading air quality tests:', loadError)
-        setError(`Gagal memuat data uji udara: ${loadError.message}`)
-        setLoading(false)
-        return
-      }
+      const data = await fetchAllRows(
+        'air_quality_tests',
+        '*',
+        (q) => (profile.role === 'kader' ? q.eq('officer_id', profile.id) : q),
+        { column: 'test_date' },
+      )
+      console.log('Load air quality tests result:', { dataLength: data?.length })
       
       if (!data || data.length === 0) {
         console.log('No air quality tests found')
@@ -6006,17 +6029,12 @@ function PanganPage({ profile, kelurahan, rw, rt, foodInspections, setFoodInspec
     if (!supabase || !profile) { setLoading(false); return }
     setLoading(true)
     try {
-      let foodQuery = supabase
-        .from('food_inspection_results')
-        .select('*')
-      if (profile.role === 'kader') foodQuery = foodQuery.eq('officer_id', profile.id)
-      const { data, error: loadError } = await foodQuery
-        .order('entry_date', { ascending: false })
-      if (loadError) {
-        setError(`Gagal memuat data hasil pemeriksaan: ${loadError.message}`)
-        setLoading(false)
-        return
-      }
+      const data = await fetchAllRows(
+        'food_inspection_results',
+        '*',
+        (q) => (profile.role === 'kader' ? q.eq('officer_id', profile.id) : q),
+        { column: 'entry_date' },
+      )
       setInspections(!data || data.length === 0 ? [] : (data as FoodInspectionResultRow[]).map(mapFoodInspectionRow))
     } catch (err) {
       setError(`Terjadi kesalahan: ${err instanceof Error ? err.message : 'Unknown error'}`)

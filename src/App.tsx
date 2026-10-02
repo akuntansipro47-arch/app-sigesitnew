@@ -253,7 +253,7 @@ const questionnaireData: Record<string, Question[]> = {
     { code: 'sumur_bor_pompa', text: 'Layak : Sumur Bor dengan Pompa (SPL)' },
     { code: 'mata_air_terlindung', text: 'Layak : Mata Air Terlindung' },
     { code: 'air_hujan', text: 'Layak : Air Hujan' },
-    { code: 'sungai_tidak_terlindung', text: 'Tidak Layak : Sungai / Mata Air Tidak Terlindungi' },
+    { code: 'sungai_tidak_terlindung', text: 'Tidak Layak : Sumur Gali Tidak Terlindungi (timba/terbuka)' },
     { code: 'air_diolah', text: 'Air diolah/Dimasak' },
     { code: 'air_keruh_diendapkan', text: 'Air baku keruh diendapkan/disaring' },
     { code: 'air_disimpan_tertutup', text: 'Air disimpan tertutup' },

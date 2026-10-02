@@ -2568,6 +2568,9 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
   const canBulkDelete = profile?.role === 'super_admin'
   const [selectedEntryIds, setSelectedEntryIds] = useState<string[]>([])
   const [bulkDeleting, setBulkDeleting] = useState(false)
+  // Pengaman hapus massal: panel konfirmasi dengan ketik teks "HAPUS".
+  const [bulkConfirmOpen, setBulkConfirmOpen] = useState(false)
+  const [bulkConfirmText, setBulkConfirmText] = useState('')
 
   // Filter regions based on user profile.
   // Kader terkunci pada wilayahnya; super_admin/admin bebas memilih wilayah apapun.
@@ -2822,7 +2825,12 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
   // berubah otomatis kembali ke halaman 1 supaya data hasil pencarian
   // langsung tampil.
   const ENTRY_PAGE_SIZE = 1000
-  useEffect(() => { setTablePage(1); setSelectedEntryIds([]) }, [searchKeyword, filterStart, filterEnd, filterKelurahanId, filterRwId, filterRtId])
+  useEffect(() => {
+    setTablePage(1)
+    setSelectedEntryIds([])
+    setBulkConfirmOpen(false)
+    setBulkConfirmText('')
+  }, [searchKeyword, filterStart, filterEnd, filterKelurahanId, filterRwId, filterRtId])
   const totalPages = Math.max(1, Math.ceil(filteredEntries.length / ENTRY_PAGE_SIZE))
   const safePage = Math.min(tablePage, totalPages)
   const pageStartIndex = (safePage - 1) * ENTRY_PAGE_SIZE
@@ -2844,10 +2852,16 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
   }
 
   // Hapus massal: dikerjakan per batch 100 id agar URL .in() tetap aman.
+  // Eksekusi hanya boleh setelah panel konfirmasi teks "HAPUS" dibuka dan
+  // diketik dengan benar — mencegah salah klik menghapus ratusan entry.
   async function deleteSelectedEntries() {
     if (!canBulkDelete || selectedEntryIds.length === 0 || !supabase) return
-    const total = selectedEntryIds.length
-    if (!window.confirm(`Hapus ${total} entry terpilih beserta kartu keluarga & jawaban kuesionernya? Tindakan ini tidak bisa dibatalkan.`)) return
+    if (!bulkConfirmOpen || bulkConfirmText.trim().toUpperCase() !== 'HAPUS') {
+      setBulkConfirmOpen(true)
+      return
+    }
+    setBulkConfirmOpen(false)
+    setBulkConfirmText('')
     setBulkDeleting(true)
     const ids = [...selectedEntryIds]
     let failures: string[] = []
@@ -3669,7 +3683,7 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
                   Mode hapus massal (Super Admin): {selectedEntryIds.length > 0 ? `${selectedEntryIds.length} baris dipilih` : 'centang baris yang akan dihapus'}
                 </span>
                 <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                  <button className="secondary" type="button" disabled={bulkDeleting || selectedEntryIds.length === 0} onClick={() => setSelectedEntryIds([])}>Bersihkan Pilihan</button>
+                  <button className="secondary" type="button" disabled={bulkDeleting || selectedEntryIds.length === 0} onClick={() => { setSelectedEntryIds([]); setBulkConfirmOpen(false); setBulkConfirmText('') }}>Bersihkan Pilihan</button>
                   <button
                     className="secondary"
                     type="button"
@@ -3678,6 +3692,35 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
                     style={{ color: '#b91c1c', borderColor: '#fca5a5', fontWeight: 700 }}
                   >
                     {bulkDeleting ? 'Menghapus…' : `Hapus Terpilih (${selectedEntryIds.length})`}
+                  </button>
+                </div>
+              </div>
+            )}
+            {canBulkDelete && bulkConfirmOpen && selectedEntryIds.length > 0 && (
+              <div style={{ gridColumn: '1 / -1', border: '2px solid #dc2626', background: '#fff', borderRadius: '8px', padding: '14px', display: 'grid', gap: '10px' }}>
+                <strong style={{ color: '#b91c1c' }}>Konfirmasi hapus {selectedEntryIds.length} entry</strong>
+                <span style={{ fontSize: '13px', color: 'var(--muted)', lineHeight: 1.5 }}>
+                  Seluruh kartu keluarga dan jawaban kuesioner pada entry terpilih ikut terhapus dan <strong>tidak bisa dibatalkan</strong>.
+                  Ketik <strong>HAPUS</strong> (huruf kapital) pada kolom di bawah untuk melanjutkan.
+                </span>
+                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
+                  <input
+                    type="text"
+                    value={bulkConfirmText}
+                    onChange={(e) => setBulkConfirmText(e.target.value)}
+                    placeholder="Ketik HAPUS"
+                    autoFocus
+                    style={{ flex: '1 1 180px', minWidth: '160px', maxWidth: '260px', padding: '10px 12px', border: '1px solid var(--line)', borderRadius: '8px', fontSize: '14px' }}
+                  />
+                  <button className="secondary" type="button" disabled={bulkDeleting} onClick={() => { setBulkConfirmOpen(false); setBulkConfirmText('') }}>Batal</button>
+                  <button
+                    className="secondary"
+                    type="button"
+                    disabled={bulkDeleting || bulkConfirmText.trim().toUpperCase() !== 'HAPUS'}
+                    onClick={() => void deleteSelectedEntries()}
+                    style={{ color: bulkConfirmText.trim().toUpperCase() === 'HAPUS' ? '#fff' : 'var(--muted)', background: bulkConfirmText.trim().toUpperCase() === 'HAPUS' ? '#dc2626' : '#fff', borderColor: '#dc2626', fontWeight: 700 }}
+                  >
+                    {bulkDeleting ? 'Menghapus…' : 'Ya, Hapus Sekarang'}
                   </button>
                 </div>
               </div>

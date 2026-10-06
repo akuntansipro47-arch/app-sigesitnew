@@ -10,6 +10,12 @@ import { canAccessModule, getDefaultModuleAccess, MODULES, ROLE_LABELS } from '.
 type View = 'beranda' | 'entry' | 'wilayah' | 'pengguna' | 'profile' | 'lokasi' | 'pangan' | 'uji_air' | 'uji_udara' | 'group_tpp' | 'laporan' | 'laporan_dbd' | 'settings'
 type RegionLevel = 'kelurahan' | 'rw' | 'rt'
 type Region = { id: string; name: string; code?: string; kelurahanId?: string; rwId?: string }
+// Ambil angka dari nama wilayah, toleran terhadap format "01", "1", "RW 01", "RT 2".
+function extractRegionNumber(name?: string): number | null {
+  if (!name) return null
+  const match = name.match(/\d+/)
+  return match ? Number.parseInt(match[0], 10) : null
+}
 type UserRole = 'super_admin' | 'admin' | 'kader'
 type ModuleAccess = { entry: boolean; wilayah: boolean; pengguna: boolean; lokasi: boolean; uji_air: boolean; uji_udara: boolean; pangan: boolean; group_tpp: boolean }
 type UserProfile = {
@@ -23,12 +29,14 @@ type UserProfile = {
   kelurahanId?: string
   rwId?: string
   rtId?: string
+  // Kader boleh memegang lebih dari satu RT dalam satu RW & kelurahan sama.
+  rtIds?: string[]
   isActive: boolean
   moduleAccess: ModuleAccess
   isTempPassword?: boolean
   lastPassword?: string | null
 }
-type ProfileRow = { id: string; full_name: string; username: string; nik: string; phone: string; email: string | null; role: UserRole; kelurahan_id: string | null; rw_id: string | null; rt_id: string | null; is_active: boolean; module_access: Partial<ModuleAccess> | null; is_temp_password: boolean | null; last_password: string | null }
+type ProfileRow = { id: string; full_name: string; username: string; nik: string; phone: string; email: string | null; role: UserRole; kelurahan_id: string | null; rw_id: string | null; rt_id: string | null; rt_ids: string[] | null; is_active: boolean; module_access: Partial<ModuleAccess> | null; is_temp_password: boolean | null; last_password: string | null }
 
 // Location module types
 type Location = {
@@ -286,6 +294,7 @@ function mapProfileRow(row: ProfileRow): UserProfile {
   return {
     id: row.id, fullName: row.full_name, username: row.username, nik: row.nik, phone: row.phone, email: row.email,
     role: row.role, kelurahanId: row.kelurahan_id ?? undefined, rwId: row.rw_id ?? undefined, rtId: row.rt_id ?? undefined,
+    rtIds: row.rt_ids?.length ? row.rt_ids : row.rt_id ? [row.rt_id] : [],
     isActive: row.is_active,
     moduleAccess: { ...getDefaultModuleAccess(row.role), ...row.module_access },
     isTempPassword: row.is_temp_password ?? false,
@@ -2579,13 +2588,20 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
   const userRw = !scopeByProfile ? rw :
                 profile?.rwId ? rw.filter(r => r.id === profile.rwId) :
                 profile?.kelurahanId ? rw.filter(r => r.kelurahanId === profile.kelurahanId) : rw
+  // Kader: kelurahan & RW tetap tunggal, tetapi RT boleh lebih dari satu
+  // (banyak RT dalam 1 RW & 1 kelurahan yang sama).
+  const kaderRtIds = scopeByProfile
+    ? new Set<string>(profile?.rtIds?.length ? profile.rtIds : profile?.rtId ? [profile.rtId] : [])
+    : null
   const userRt = !scopeByProfile ? rt :
-                profile?.rtId ? rt.filter(r => r.id === profile.rtId) :
+                kaderRtIds && kaderRtIds.size > 0 ? rt.filter(r => kaderRtIds.has(r.id)) :
                 profile?.rwId ? rt.filter(r => r.rwId === profile.rwId) :
                 profile?.kelurahanId ? rt.filter(r => {
                   const rwItem = rw.find(rw => rw.id === r.rwId)
                   return rwItem?.kelurahanId === profile.kelurahanId
                 }) : rt
+  // RT default untuk form kader: RT pertama yang dipilikinya.
+  const kaderDefaultRtId = profile?.rtIds?.[0] || profile?.rtId || ''
 
   // Opsi filter cascading: daftar RW mengikuti kelurahan terpilih,
   // daftar RT mengikuti RW terpilih (dan kelurahan induknya).
@@ -2604,7 +2620,7 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
 
   const [selectedKelurahanId, setSelectedKelurahanId] = useState(scopeByProfile ? profile?.kelurahanId || '' : '')
   const [selectedRwId, setSelectedRwId] = useState(scopeByProfile ? profile?.rwId || '' : '')
-  const [selectedRtId, setSelectedRtId] = useState(scopeByProfile ? profile?.rtId || '' : '')
+  const [selectedRtId, setSelectedRtId] = useState(scopeByProfile ? kaderDefaultRtId : '')
 
   // Profil tiba belakangan (async); selaraskan auto-filter wilayah kader
   // tanpa menimpa pilihan yang sudah diubah user. Admin tidak diisi otomatis
@@ -2613,8 +2629,9 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
     if (profile?.role !== 'kader') return
     if (profile?.kelurahanId) setSelectedKelurahanId((prev) => prev || profile.kelurahanId || '')
     if (profile?.rwId) setSelectedRwId((prev) => prev || profile.rwId || '')
-    if (profile?.rtId) setSelectedRtId((prev) => prev || profile.rtId || '')
-  }, [profile?.role, profile?.kelurahanId, profile?.rwId, profile?.rtId])
+    const defaultRt = profile?.rtIds?.[0] || profile?.rtId || ''
+    if (defaultRt) setSelectedRtId((prev) => prev || defaultRt)
+  }, [profile?.role, profile?.kelurahanId, profile?.rwId, profile?.rtIds?.join(','), profile?.rtId])
 
   // Nama penginput: dipetakan dari profiles via officer_id.
   // Bila RLS membatasi, fallback ke nama profil sendiri / '-'.
@@ -2809,7 +2826,15 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
     const rwName = entry.rwId ? rw.find(r => r.id === entry.rwId)?.name || '' : ''
     const rtName = entry.rtId ? rt.find(r => r.id === entry.rtId)?.name || '' : ''
     const firstKk = entry.familyCards[0]
-    
+
+    // "RW 1" / "RT 2" harus cocok angka persis, bukan substring (agar RW 13/18 tidak ikut).
+    const rwRtKw = kw.trim().match(/^(rw|rt)\s*(\d+)$/)
+    if (rwRtKw) {
+      const wanted = Number.parseInt(rwRtKw[2], 10)
+      const actual = extractRegionNumber(rwRtKw[1] === 'rw' ? rwName : rtName)
+      return actual !== null && actual === wanted
+    }
+
     return entry.entryDate.includes(searchKeyword)
       || entry.entryNumber.toString().includes(kw)
       || officerName(entry.officerId).toLowerCase().includes(kw)
@@ -2941,6 +2966,10 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
     type StagedCard = ImportCard & { entryDate: string; kelurahanId: string; rwId: string; rtId: string; groupTag: string }
     const staged: StagedCard[] = []
     const isKader = profile?.role === 'kader'
+    // Kader boleh memegang banyak RT dalam 1 RW & kelurahan yang sama.
+    const kaderRtIds = isKader
+      ? new Set<string>(profile?.rtIds?.length ? profile.rtIds : profile?.rtId ? [profile.rtId] : [])
+      : null
     rows.slice(1).forEach((r, i) => {
       const rowNum = i + 2
       const rowArray = r as unknown[]
@@ -2963,7 +2992,7 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
       const rtItem = rtInRw.find((t) => cleanImportText(t.name) === rtName)
         ?? rtInRw.find((t) => normalizeRegionNumber(t.name) === normalizeRegionNumber(rtName))
       if (!rtItem) { errors.push(`${prefix} RT "${rtName || '-'}" tidak ditemukan di RW tersebut. Pastikan format sel RT di Excel adalah Teks bila memakai nol depan (mis. "01").`); return }
-      if (isKader && profile?.rtId && rtItem.id !== profile.rtId) { errors.push(`${prefix} di luar wilayah Anda.`); return }
+      if (kaderRtIds && kaderRtIds.size > 0 && !kaderRtIds.has(rtItem.id)) { errors.push(`${prefix} di luar wilayah Anda.`); return }
       const kkNumber = String(cell(rowArray, 'No KK (16 digit)')).replace(/\D/g, '').slice(0, 16)
       if (!kkNumber) { errors.push(`${prefix} No KK wajib diisi (angka, maks 16 digit).`); return }
       const name = String(cell(rowArray, 'Nama Kepala Keluarga')).trim()
@@ -3124,7 +3153,7 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
     const lockWilayah = profile?.role === 'kader'
     setSelectedKelurahanId(entry?.kelurahanId || (lockWilayah ? profile?.kelurahanId || '' : ''))
     setSelectedRwId(entry?.rwId || (lockWilayah ? profile?.rwId || '' : ''))
-    setSelectedRtId(entry?.rtId || (lockWilayah ? profile?.rtId || '' : ''))
+    setSelectedRtId(entry?.rtId || (lockWilayah ? kaderDefaultRtId : ''))
     setCurrentKkIndex(0)
     if (!entry) {
       setFamilyCards([])
@@ -5754,6 +5783,8 @@ function PenggunaPage({ kelurahan, rw, rt, currentUserId }: { kelurahan: Region[
   const [submitting, setSubmitting] = useState(false)
   const [selectedKelurahanId, setSelectedKelurahanId] = useState('')
   const [selectedRwId, setSelectedRwId] = useState('')
+  // Kader: satu kelurahan + satu RW, tetapi boleh banyak RT.
+  const [selectedRtIds, setSelectedRtIds] = useState<string[]>([])
   const [role, setRole] = useState<UserRole>('kader')
   const [moduleAccess, setModuleAccess] = useState<ModuleAccess>(getDefaultModuleAccess('kader'))
   const [usernameDraft, setUsernameDraft] = useState('')
@@ -5846,6 +5877,7 @@ function PenggunaPage({ kelurahan, rw, rt, currentUserId }: { kelurahan: Region[
     setError('')
     setSelectedKelurahanId(user?.kelurahanId ?? '')
     setSelectedRwId(user?.rwId ?? '')
+    setSelectedRtIds(user ? (user.rtIds?.length ? user.rtIds : user.rtId ? [user.rtId] : []) : [])
     const nextRole = user?.role ?? 'kader'
     setRole(nextRole)
     setModuleAccess(user ? resolveModuleAccess(nextRole, user.moduleAccess) : getDefaultModuleAccess(nextRole))
@@ -5892,6 +5924,10 @@ function PenggunaPage({ kelurahan, rw, rt, currentUserId }: { kelurahan: Region[
     let password = String(data.get('password') ?? '').trim()
     if (!editing) password = generatePassword()
 
+    // Kader: kelurahan & RW tunggal, RT boleh lebih dari satu.
+    const rtIds = data.getAll('rtIds').map((value) => String(value)).filter(Boolean)
+    if (rtIds.length === 0) { setError('Pilih minimal satu RT.'); return }
+
     const payload = {
       action: editing ? 'update' : 'create',
       id: editing?.id,
@@ -5904,7 +5940,8 @@ function PenggunaPage({ kelurahan, rw, rt, currentUserId }: { kelurahan: Region[
       role: role,
       kelurahanId: String(data.get('kelurahanId') ?? '') || undefined,
       rwId: String(data.get('rwId') ?? '') || undefined,
-      rtId: String(data.get('rtId') ?? '') || undefined,
+      rtId: rtIds[0],
+      rtIds: rtIds,
       isActive: data.get('isActive') === 'on',
       moduleAccess: resolveModuleAccess(role, moduleAccess),
     }
@@ -5970,10 +6007,46 @@ function PenggunaPage({ kelurahan, rw, rt, currentUserId }: { kelurahan: Region[
   const keyword = searchTerm.trim().toLowerCase()
   const getKelurahanName = (kelurahanId?: string) => kelurahan.find((item) => item.id === kelurahanId)?.name ?? '-'
   const getRwName = (rwId?: string) => rw.find((item) => item.id === rwId)?.name ?? '-'
-  const getRtName = (rtId?: string) => rt.find((item) => item.id === rtId)?.name ?? '-'
+  // Kader bisa memegang banyak RT — tampilkan semua namanya.
+  const getRtNames = (user: UserProfile) => {
+    const ids = user.rtIds?.length ? user.rtIds : user.rtId ? [user.rtId] : []
+    const names = ids.map((id) => rt.find((item) => item.id === id)?.name).filter((name): name is string => Boolean(name))
+    return names.length > 0 ? names.join(', ') : '-'
+  }
   const filteredUsers = users.filter((user) => {
     if (filterKelurahanId && user.kelurahanId !== filterKelurahanId) return false
     if (!keyword) return true
+
+    const rtNameList = (user.rtIds?.length ? user.rtIds : user.rtId ? [user.rtId] : [])
+      .map((id) => rt.find((item) => item.id === id)?.name)
+      .filter((name): name is string => Boolean(name))
+    // Tambah varian angka tanpa nol di depan agar "RW 1" cocok dengan data "01",
+    // serta varian tanpa spasi ("RW1"). Setiap RT dicari satu per satu.
+    const regionVariants = (label: string, name: string) => {
+      const variants = [`${label} ${name}`, `${label}${name}`]
+      const asNumber = Number.parseInt(name, 10)
+      if (!Number.isNaN(asNumber) && String(asNumber) !== name) {
+        variants.push(`${label} ${asNumber}`, `${label}${asNumber}`)
+      }
+      return variants
+    }
+
+    // Jika user mengetik pola "RW 1" / "RT 2" (dll.), cocokkan ANGKA persis
+    // (sebagai integer, jadi "RW 1" == "RW 01"), bukan substring — agar
+    // "RW 1" tidak ikut menampilkan RW 13, RW 18, dst.
+    const rwRtQuery = keyword.match(/^(rw|rt)\s*(\d+)$/)
+    if (rwRtQuery) {
+      const label = rwRtQuery[1]
+      const wanted = Number.parseInt(rwRtQuery[2], 10)
+      if (label === 'rw') {
+        const actual = extractRegionNumber(getRwName(user.rwId))
+        return actual !== null && actual === wanted
+      }
+      return rtNameList.some((name) => {
+        const actual = extractRegionNumber(name)
+        return actual !== null && actual === wanted
+      })
+    }
 
     const searchableText = [
       user.fullName,
@@ -5983,8 +6056,8 @@ function PenggunaPage({ kelurahan, rw, rt, currentUserId }: { kelurahan: Region[
       user.email ?? '',
       ROLE_LABELS[user.role],
       getKelurahanName(user.kelurahanId),
-      `RW ${getRwName(user.rwId)}`,
-      `RT ${getRtName(user.rtId)}`,
+      ...regionVariants('RW', getRwName(user.rwId)),
+      ...rtNameList.flatMap((name) => regionVariants('RT', name)),
     ].join(' ').toLowerCase()
 
     return searchableText.includes(keyword)
@@ -6010,9 +6083,27 @@ function PenggunaPage({ kelurahan, rw, rt, currentUserId }: { kelurahan: Region[
         <label>No. HP<input defaultValue={editing?.phone} name="phone" required type="tel" /></label>
         {editing && <label>Username<input name="username" onChange={(event) => setUsernameDraft(event.target.value)} required value={usernameDraft} /></label>}
         {editing && <label>Password baru (opsional)<input autoComplete="new-password" minLength={8} name="password" placeholder="Kosongkan jika tidak ingin mengganti" type="password" /></label>}
-        <label>Kelurahan<select name="kelurahanId" onChange={(event) => { setSelectedKelurahanId(event.target.value); setSelectedRwId('') }} value={selectedKelurahanId} required><option value="">Pilih kelurahan</option>{kelurahan.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
-        <label>RW<select disabled={!selectedKelurahanId} name="rwId" onChange={(event) => setSelectedRwId(event.target.value)} value={selectedRwId} required><option value="">Pilih RW</option>{rwOptions.map((item) => <option key={item.id} value={item.id}>RW {item.name}</option>)}</select></label>
-        <label>RT<select defaultValue={editing?.rtId ?? ''} disabled={!selectedRwId} name="rtId" required><option value="">Pilih RT</option>{rtOptions.map((item) => <option key={item.id} value={item.id}>RT {item.name}</option>)}</select></label>
+        <label>Kelurahan<select name="kelurahanId" onChange={(event) => { setSelectedKelurahanId(event.target.value); setSelectedRwId(''); setSelectedRtIds([]) }} value={selectedKelurahanId} required><option value="">Pilih kelurahan</option>{kelurahan.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+        <label>RW<select disabled={!selectedKelurahanId} name="rwId" onChange={(event) => { setSelectedRwId(event.target.value); setSelectedRtIds([]) }} value={selectedRwId} required><option value="">Pilih RW</option>{rwOptions.map((item) => <option key={item.id} value={item.id}>RW {item.name}</option>)}</select></label>
+        <label className="wide">
+          <span>RT — boleh pilih lebih dari satu (satu RW &amp; kelurahan sama)</span>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: '8px', marginTop: '8px' }}>
+            {selectedRwId && rtOptions.map((item) => (
+              <label className="checkbox-label" key={item.id} style={{ margin: 0 }}>
+                <input
+                  checked={selectedRtIds.includes(item.id)}
+                  name="rtIds"
+                  onChange={(event) => setSelectedRtIds((prev) => event.target.checked ? [...prev, item.id] : prev.filter((id) => id !== item.id))}
+                  type="checkbox"
+                  value={item.id}
+                />
+                <span>RT {item.name}</span>
+              </label>
+            ))}
+            {!selectedRwId && <small style={{ color: 'var(--muted)', fontSize: '12px' }}>Pilih RW terlebih dahulu</small>}
+            {selectedRwId && rtOptions.length === 0 && <small style={{ color: 'var(--muted)', fontSize: '12px' }}>Belum ada RT di RW ini</small>}
+          </div>
+        </label>
         <label>Status<select defaultValue={editing?.isActive === false ? 'off' : 'on'} name="isActive"><option value="on">Aktif</option><option value="off">Nonaktif</option></select></label>
         <div className="role-field wide">
           <span className="field-title">Level akses pengguna</span>
@@ -6028,7 +6119,7 @@ function PenggunaPage({ kelurahan, rw, rt, currentUserId }: { kelurahan: Region[
         <div className="module-access wide">
           <span className="field-title">Akses modul</span>
           {role === 'super_admin' && <p className="access-note">Super Admin mendapat <strong>full akses</strong> ke semua modul dan fitur tanpa batasan.</p>}
-          {role === 'kader' && <p className="access-note">Kader hanya dapat mengakses modul <strong>Entry Data</strong> dan hanya melihat data milik sendiri.</p>}
+          {role === 'kader' && <p className="access-note">Kader hanya dapat mengakses modul <strong>Entry Data</strong> dan hanya melihat data milik sendiri. Wilayah: <strong>1 kelurahan &amp; 1 RW</strong>, dengan <strong>satu atau lebih RT</strong> dalam RW tersebut.</p>}
           {role === 'admin' && <div className="module-grid">
             {adminModules.map((m) => (
               <label className="checkbox-label" key={m.key}>
@@ -6089,7 +6180,7 @@ function PenggunaPage({ kelurahan, rw, rt, currentUserId }: { kelurahan: Region[
             {user.email && ` · ${user.email}`}
           </small>
           <small className="user-region">
-            Kelurahan: {getKelurahanName(user.kelurahanId)} · RW {getRwName(user.rwId)} · RT {getRtName(user.rtId)}
+            Kelurahan: {getKelurahanName(user.kelurahanId)} · RW {getRwName(user.rwId)} · RT {getRtNames(user)}
           </small>
           <div className="module-badges">
             {user.role === 'super_admin'
@@ -6969,6 +7060,11 @@ function LaporanPage() {
     if (!inDateRange(r.dateMs, dateRangeMs(filterStart, filterEnd))) return false
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase()
+      const jentikRw = q.trim().match(/^(rw|rt)\s*(\d+)$/)
+      if (jentikRw) {
+        const actual = extractRegionNumber(r.rw)
+        return actual !== null && actual === Number.parseInt(jentikRw[2], 10)
+      }
       if (!r.pelapor.toLowerCase().includes(q) && !r.rw.toLowerCase().includes(q) && !r.lokasiJentik.toLowerCase().includes(q)) return false
     }
     return true

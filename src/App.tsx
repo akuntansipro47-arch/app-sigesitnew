@@ -5931,8 +5931,9 @@ function PenggunaPage({ kelurahan, rw, rt, currentUserId }: { kelurahan: Region[
     if (!editing) password = generatePassword()
 
     // Kader: kelurahan & RW tunggal, RT boleh lebih dari satu.
+    // Admin/super_admin: wilayah opsional (kosong = bisa entry semua wilayah).
     const rtIds = data.getAll('rtIds').map((value) => String(value)).filter(Boolean)
-    if (rtIds.length === 0) { setError('Pilih minimal satu RT.'); return }
+    if (role === 'kader' && rtIds.length === 0) { setError('Pilih minimal satu RT.'); return }
 
     const payload = {
       action: editing ? 'update' : 'create',
@@ -5944,9 +5945,10 @@ function PenggunaPage({ kelurahan, rw, rt, currentUserId }: { kelurahan: Region[
       nik: nik,
       phone: String(data.get('phone') ?? '').trim(),
       role: role,
-      kelurahanId: String(data.get('kelurahanId') ?? '') || undefined,
-      rwId: String(data.get('rwId') ?? '') || undefined,
-      rtId: rtIds[0],
+      kelurahanId: role === 'kader' ? (String(data.get('kelurahanId') ?? '') || undefined) : (String(data.get('kelurahanId') ?? '') || ''),
+      rwId: role === 'kader' ? (String(data.get('rwId') ?? '') || undefined) : (String(data.get('rwId') ?? '') || ''),
+      // Admin/super_admin tanpa wilayah = bisa entry semua wilayah; kosongkan eksplisit.
+      rtId: role === 'kader' ? rtIds[0] : (rtIds[0] ?? ''),
       rtIds: rtIds,
       isActive: data.get('isActive') === 'on',
       moduleAccess: resolveModuleAccess(role, moduleAccess),
@@ -6089,10 +6091,10 @@ function PenggunaPage({ kelurahan, rw, rt, currentUserId }: { kelurahan: Region[
         <label>No. HP<input defaultValue={editing?.phone} name="phone" required type="tel" /></label>
         {editing && <label>Username<input name="username" onChange={(event) => setUsernameDraft(event.target.value)} required value={usernameDraft} /></label>}
         {editing && <label>Password baru (opsional)<input autoComplete="new-password" minLength={8} name="password" placeholder="Kosongkan jika tidak ingin mengganti" type="password" /></label>}
-        <label>Kelurahan<select name="kelurahanId" onChange={(event) => { setSelectedKelurahanId(event.target.value); setSelectedRwId(''); setSelectedRtIds([]) }} value={selectedKelurahanId} required><option value="">Pilih kelurahan</option>{kelurahan.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
-        <label>RW<select disabled={!selectedKelurahanId} name="rwId" onChange={(event) => { setSelectedRwId(event.target.value); setSelectedRtIds([]) }} value={selectedRwId} required><option value="">Pilih RW</option>{rwOptions.map((item) => <option key={item.id} value={item.id}>RW {item.name}</option>)}</select></label>
+        <label>Kelurahan{role !== 'kader' && <small style={{ color: 'var(--muted)' }}> (opsional)</small>}<select name="kelurahanId" onChange={(event) => { setSelectedKelurahanId(event.target.value); setSelectedRwId(''); setSelectedRtIds([]) }} value={selectedKelurahanId} required={role === 'kader'}><option value="">{role === 'kader' ? 'Pilih kelurahan' : 'Semua kelurahan'}</option>{kelurahan.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+        <label>RW{role !== 'kader' && <small style={{ color: 'var(--muted)' }}> (opsional)</small>}<select disabled={!selectedKelurahanId} name="rwId" onChange={(event) => { setSelectedRwId(event.target.value); setSelectedRtIds([]) }} value={selectedRwId} required={role === 'kader'}><option value="">{role === 'kader' ? 'Pilih RW' : 'Semua RW'}</option>{rwOptions.map((item) => <option key={item.id} value={item.id}>RW {item.name}</option>)}</select></label>
         <label className="wide">
-          <span>RT — boleh pilih lebih dari satu (satu RW &amp; kelurahan sama)</span>
+          <span>RT{role === 'kader' ? ' — boleh pilih lebih dari satu (satu RW & kelurahan sama)' : ' — opsional untuk admin/super_admin; kosongkan agar bisa entry semua RT'}</span>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: '8px', marginTop: '8px' }}>
             {selectedRwId && rtOptions.map((item) => (
               <label className="checkbox-label" key={item.id} style={{ margin: 0 }}>
@@ -6186,7 +6188,9 @@ function PenggunaPage({ kelurahan, rw, rt, currentUserId }: { kelurahan: Region[
             {user.email && ` · ${user.email}`}
           </small>
           <small className="user-region">
-            Kelurahan: {getKelurahanName(user.kelurahanId)} · RW {getRwName(user.rwId)} · RT {getRtNames(user)}
+            {user.role !== 'kader' && !user.kelurahanId
+              ? 'Wilayah: Semua kelurahan/RW/RT'
+              : <>Kelurahan: {getKelurahanName(user.kelurahanId)} · RW {getRwName(user.rwId)} · RT {getRtNames(user)}</>}
           </small>
           <div className="module-badges">
             {user.role === 'super_admin'

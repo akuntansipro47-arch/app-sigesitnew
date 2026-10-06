@@ -5790,6 +5790,7 @@ function PenggunaPage({ kelurahan, rw, rt, currentUserId }: { kelurahan: Region[
   const [usernameDraft, setUsernameDraft] = useState('')
   const [filterKelurahanId, setFilterKelurahanId] = useState('')
   const [searchTerm, setSearchTerm] = useState('')
+  const formRef = useRef<HTMLFormElement | null>(null)
 
   async function loadUsers() {
     if (!supabase) {
@@ -5883,6 +5884,11 @@ function PenggunaPage({ kelurahan, rw, rt, currentUserId }: { kelurahan: Region[
     setModuleAccess(user ? resolveModuleAccess(nextRole, user.moduleAccess) : getDefaultModuleAccess(nextRole))
     setUsernameDraft(user?.username ?? '')
     setFormOpen(true)
+    // Otomatis arahkan layar ke form input (paling atas halaman).
+    window.setTimeout(() => {
+      formRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      formRef.current?.querySelector('input')?.focus({ preventScroll: true })
+    }, 50)
   }
 
   async function submit(event: FormEvent<HTMLFormElement>) {
@@ -6074,7 +6080,7 @@ function PenggunaPage({ kelurahan, rw, rt, currentUserId }: { kelurahan: Region[
       <div><p className="eyebrow">DATA MASTER</p><h1>Pengguna Kader & Relawan</h1><p>Kelola akun kader, relawan, dan admin yang dapat mengakses SIGESIT.</p></div>
       <button className="primary" onClick={() => openForm()} type="button">+ Tambah pengguna</button>
     </div>
-    {formOpen && <form className="region-form" onSubmit={submit}>
+    {formOpen && <form className="region-form" onSubmit={submit} ref={formRef}>
       <strong>{editing ? 'Edit' : 'Tambah'} pengguna</strong>
       {error && <div className="auth-error">{error}</div>}
       <div className="region-form-fields">

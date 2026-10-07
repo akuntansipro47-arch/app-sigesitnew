@@ -4496,61 +4496,41 @@ function LokasiPage({ kelurahan, rw, rt, locations, reloadLocations }: { kelurah
   </section>
 }
 
-function LocationSearchSelect({ locations, value, onChange }: { locations: Location[]; value: string; onChange: (id: string) => void }) {
+function LocationSearchSelect({ locations, value, onChange, inputId }: { locations: Location[]; value: string; onChange: (id: string) => void; inputId: string }) {
   const selected = locations.find((loc) => loc.id === value)
   const [query, setQuery] = useState(selected?.name ?? '')
-  const [open, setOpen] = useState(false)
-  // Sinkronkan teks input hanya saat nilai berubah DARI LUAR (mis. lokasi default
-  // diisi async / reset form). Perubahan akibat ketikan user tidak menimpa teks.
+  // Sinkronkan teks input hanya saat nilai berubah DARI LUAR.
   const lastValue = useRef(value)
   useEffect(() => {
     if (lastValue.current === value) return
     lastValue.current = value
     setQuery(selected?.name ?? '')
   }, [value, selected?.name])
-  // Debounce: tunggu user selesai mengetik (~400ms) baru memfilter,
-  // supaya tidak mencari di setiap ketukan.
-  const [debouncedQuery, setDebouncedQuery] = useState(query)
-  useEffect(() => {
-    const t = window.setTimeout(() => setDebouncedQuery(query), 400)
-    return () => window.clearTimeout(t)
-  }, [query])
-  const matches = locations
-    .filter((loc) => loc.name.toLowerCase().includes(debouncedQuery.trim().toLowerCase()))
-    .slice(0, 50)
   return (
-    <div style={{ position: 'relative' }}>
+    <>
       <input
         autoComplete="off"
-        onBlur={() => { window.setTimeout(() => setOpen(false), 150) }}
-        onChange={(e) => { setQuery(e.target.value); setOpen(true); if (value) { lastValue.current = ''; onChange('') } }}
-        onFocus={() => setOpen(true)}
+        list={inputId}
+        onChange={(e) => {
+          const text = e.target.value
+          setQuery(text)
+          // Cocokkan persis → pilih id; kalau tidak cocok, kosongkan id.
+          const match = locations.find((loc) => loc.name.toLowerCase() === text.trim().toLowerCase())
+          const nextId = match ? match.id : ''
+          lastValue.current = nextId
+          if (nextId !== value) onChange(nextId)
+        }}
         placeholder="Ketik untuk mencari lokasi…"
         required={!value}
         type="text"
         value={query}
       />
-      {open && matches.length > 0 && (
-        <ul style={{ position: 'absolute', zIndex: 20, left: 0, right: 0, margin: 0, padding: '4px 0', listStyle: 'none', background: '#fff', border: '1px solid #d9d9d9', borderRadius: '8px', maxHeight: '240px', overflowY: 'auto', boxShadow: '0 8px 20px rgba(0,0,0,0.12)' }}>
-          {matches.map((loc) => (
-            <li key={loc.id}>
-              <button
-                onMouseDown={(e) => { e.preventDefault(); onChange(loc.id); setQuery(loc.name); setOpen(false) }}
-                style={{ display: 'block', width: '100%', textAlign: 'left', padding: '8px 12px', border: 'none', background: loc.id === value ? '#f0f0f0' : 'transparent', cursor: 'pointer' }}
-                type="button"
-              >
-                {loc.name}
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
-      {open && debouncedQuery.trim() && matches.length === 0 && (
-        <div style={{ position: 'absolute', zIndex: 20, left: 0, right: 0, padding: '8px 12px', background: '#fff', border: '1px solid #d9d9d9', borderRadius: '8px', color: 'var(--muted)', fontSize: '13px' }}>
-          Lokasi tidak ditemukan
-        </div>
-      )}
-    </div>
+      <datalist id={inputId}>
+        {locations.map((loc) => (
+          <option key={loc.id} value={loc.name} />
+        ))}
+      </datalist>
+    </>
   )
 }
 
@@ -4989,7 +4969,7 @@ function UjiAirPage({ profile, locations, kelurahan, waterTests, setWaterTests }
         <h2>Informasi Uji</h2>
         <div className="form-grid">
           <label>Lokasi
-            <LocationSearchSelect locations={locations} value={formData.locationId} onChange={(id) => setFormData({ ...formData, locationId: id })} />
+<LocationSearchSelect inputId="location-list-air" locations={locations} value={formData.locationId} onChange={(id) => setFormData({ ...formData, locationId: id })} />
             <small style={{ display: 'block', marginTop: '6px', color: 'var(--muted)' }}>
               Kelurahan: {getLocationInfo(formData.locationId).kelurahanName}
             </small>
@@ -5552,7 +5532,7 @@ function UjiUdaraPage({ profile, locations, kelurahan, airTests, setAirTests }: 
         <h2>Informasi Uji</h2>
         <div className="form-grid">
           <label>Lokasi
-            <LocationSearchSelect locations={locations} value={formData.locationId} onChange={(id) => setFormData({ ...formData, locationId: id })} />
+<LocationSearchSelect inputId="location-list-udara" locations={locations} value={formData.locationId} onChange={(id) => setFormData({ ...formData, locationId: id })} />
             <small style={{ display: 'block', marginTop: '6px', color: 'var(--muted)' }}>
               Kelurahan: {getLocationInfo(formData.locationId).kelurahanName}
             </small>

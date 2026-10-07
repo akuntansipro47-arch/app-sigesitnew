@@ -7143,6 +7143,7 @@ function LaporanPage({ profile }: { profile?: UserProfile | null }) {
           {profile?.role === 'super_admin' && (
             <a className="secondary" href="https://docs.google.com/spreadsheets/d/1ZJb9b0UevSdfhxtfBOYOyZbWQs9Knj7P1BkTXL7Fn9g" target="_blank" rel="noreferrer" style={{ textDecoration: 'none' }}>Buka Google Sheet</a>
           )}
+          <a className="primary" href="https://docs.google.com/forms/d/e/1FAIpQLSeOVoTsAL6lH3U1Wvo6YZ5HqvI0GYNrfYFuOapng4YBML3ALw/viewform?pli=1" target="_blank" rel="noreferrer" style={{ textDecoration: 'none' }}>Input Laporan Jentik</a>
           <button className="secondary" onClick={() => void load()} type="button">Muat Ulang</button>
         </div>
       </header>
@@ -7391,6 +7392,7 @@ function LaporanDbdPage({ profile }: { profile?: UserProfile | null }) {
           {profile?.role === 'super_admin' && (
             <a className="secondary" href="https://docs.google.com/spreadsheets/d/1r3f7iJhjFaXHR3079dPg_xRPdBetzsskf09yfmDVZrs" target="_blank" rel="noreferrer" style={{ textDecoration: 'none' }}>Buka Google Sheet</a>
           )}
+          <a className="primary" href="https://docs.google.com/forms/d/e/1FAIpQLSfX4jfr19Nw8GNm0VJteEDtde1lJmm-NOxb4OVdPlhhdrI9Uw/viewform" target="_blank" rel="noreferrer" style={{ textDecoration: 'none' }}>Input Laporan DBD</a>
           <button className="secondary" onClick={() => void load()} type="button">Muat Ulang</button>
         </div>
       </header>

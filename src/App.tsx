@@ -5252,11 +5252,11 @@ function UjiUdaraPage({ profile, locations, kelurahan, airTests, setAirTests }: 
       'Lokasi',
       'Suhu 1/2/3',
       'Kelembapan 1/2/3',
-      'Kebisingan 1/2/3',
-      'Pencahayaan 1/2/3',
+      'Ventilasi 1/2/3',
       'PM 2.5 1/2/3',
       'PM 10 1/2/3',
-      'Ventilasi 1/2/3',
+      'Kebisingan 1/2/3',
+      'Pencahayaan 1/2/3',
     ]
     const rows = filteredTests.map((test, index) => {
       const info = getLocationInfo(test.locationId)
@@ -5267,11 +5267,11 @@ function UjiUdaraPage({ profile, locations, kelurahan, airTests, setAirTests }: 
         lokasiCell,
         `${test.temperature1 || 0}/${test.temperature2 || 0}/${test.temperature3 || 0}`,
         `${test.humidity1 || 0}/${test.humidity2 || 0}/${test.humidity3 || 0}`,
-        `${test.noise1 || 0}/${test.noise2 || 0}/${test.noise3 || 0}`,
-        `${test.lighting1 || 0}/${test.lighting2 || 0}/${test.lighting3 || 0}`,
+        `${test.ventilationRate1 || 0}/${test.ventilationRate2 || 0}/${test.ventilationRate3 || 0}`,
         `${test.pm25_1 || 0}/${test.pm25_2 || 0}/${test.pm25_3 || 0}`,
         `${test.pm10_1 || 0}/${test.pm10_2 || 0}/${test.pm10_3 || 0}`,
-        `${test.ventilationRate1 || 0}/${test.ventilationRate2 || 0}/${test.ventilationRate3 || 0}`,
+        `${test.noise1 || 0}/${test.noise2 || 0}/${test.noise3 || 0}`,
+        `${test.lighting1 || 0}/${test.lighting2 || 0}/${test.lighting3 || 0}`,
       ]
     })
     const today = new Date().toISOString().slice(0, 10)
@@ -5422,21 +5422,21 @@ function UjiUdaraPage({ profile, locations, kelurahan, airTests, setAirTests }: 
         { key: 'humidity_1', label: 'Kelembapan 1', value: formData.humidity1 },
         { key: 'humidity_2', label: 'Kelembapan 2', value: formData.humidity2 },
         { key: 'humidity_3', label: 'Kelembapan 3', value: formData.humidity3 },
-        { key: 'noise_1', label: 'Kebisingan 1', value: formData.noise1 },
-        { key: 'noise_2', label: 'Kebisingan 2', value: formData.noise2 },
-        { key: 'noise_3', label: 'Kebisingan 3', value: formData.noise3 },
-        { key: 'lighting_1', label: 'Pencahayaan 1', value: formData.lighting1 },
-        { key: 'lighting_2', label: 'Pencahayaan 2', value: formData.lighting2 },
-        { key: 'lighting_3', label: 'Pencahayaan 3', value: formData.lighting3 },
+        { key: 'ventilation_rate_1', label: 'Ventilasi 1', value: formData.ventilationRate1 },
+        { key: 'ventilation_rate_2', label: 'Ventilasi 2', value: formData.ventilationRate2 },
+        { key: 'ventilation_rate_3', label: 'Ventilasi 3', value: formData.ventilationRate3 },
         { key: 'pm25_1', label: 'PM 2.5 ke-1', value: formData.pm25_1 },
         { key: 'pm25_2', label: 'PM 2.5 ke-2', value: formData.pm25_2 },
         { key: 'pm25_3', label: 'PM 2.5 ke-3', value: formData.pm25_3 },
         { key: 'pm10_1', label: 'PM 10 ke-1', value: formData.pm10_1 },
         { key: 'pm10_2', label: 'PM 10 ke-2', value: formData.pm10_2 },
         { key: 'pm10_3', label: 'PM 10 ke-3', value: formData.pm10_3 },
-        { key: 'ventilation_rate_1', label: 'Ventilasi 1', value: formData.ventilationRate1 },
-        { key: 'ventilation_rate_2', label: 'Ventilasi 2', value: formData.ventilationRate2 },
-        { key: 'ventilation_rate_3', label: 'Ventilasi 3', value: formData.ventilationRate3 },
+        { key: 'noise_1', label: 'Kebisingan 1', value: formData.noise1 },
+        { key: 'noise_2', label: 'Kebisingan 2', value: formData.noise2 },
+        { key: 'noise_3', label: 'Kebisingan 3', value: formData.noise3 },
+        { key: 'lighting_1', label: 'Pencahayaan 1', value: formData.lighting1 },
+        { key: 'lighting_2', label: 'Pencahayaan 2', value: formData.lighting2 },
+        { key: 'lighting_3', label: 'Pencahayaan 3', value: formData.lighting3 },
       ]
       const parsed: Record<string, number | null> = {}
       for (const field of numericFields) {
@@ -5572,18 +5572,11 @@ function UjiUdaraPage({ profile, locations, kelurahan, airTests, setAirTests }: 
               <input value={formData.humidity3} onChange={(e) => setFormData({ ...formData, humidity3: e.target.value })} placeholder="3" />
             </div>
           </label>
-          <label><span className="entry-no">{nextEntryNo()}.</span> Kebisingan (dB)
+          <label><span className="entry-no">{nextEntryNo()}.</span> Ventilasi (m³/h)
             <div className="inline-fields">
-              <input value={formData.noise1} onChange={(e) => setFormData({ ...formData, noise1: e.target.value })} placeholder="1" />
-              <input value={formData.noise2} onChange={(e) => setFormData({ ...formData, noise2: e.target.value })} placeholder="2" />
-              <input value={formData.noise3} onChange={(e) => setFormData({ ...formData, noise3: e.target.value })} placeholder="3" />
-            </div>
-          </label>
-          <label><span className="entry-no">{nextEntryNo()}.</span> Pencahayaan (lux)
-            <div className="inline-fields">
-              <input value={formData.lighting1} onChange={(e) => setFormData({ ...formData, lighting1: e.target.value })} placeholder="1" />
-              <input value={formData.lighting2} onChange={(e) => setFormData({ ...formData, lighting2: e.target.value })} placeholder="2" />
-              <input value={formData.lighting3} onChange={(e) => setFormData({ ...formData, lighting3: e.target.value })} placeholder="3" />
+              <input value={formData.ventilationRate1} onChange={(e) => setFormData({ ...formData, ventilationRate1: e.target.value })} placeholder="1" />
+              <input value={formData.ventilationRate2} onChange={(e) => setFormData({ ...formData, ventilationRate2: e.target.value })} placeholder="2" />
+              <input value={formData.ventilationRate3} onChange={(e) => setFormData({ ...formData, ventilationRate3: e.target.value })} placeholder="3" />
             </div>
           </label>
           <label><span className="entry-no">{nextEntryNo()}.</span> PM 2.5 (µg/m³)
@@ -5600,11 +5593,18 @@ function UjiUdaraPage({ profile, locations, kelurahan, airTests, setAirTests }: 
               <input value={formData.pm10_3} onChange={(e) => setFormData({ ...formData, pm10_3: e.target.value })} placeholder="3" />
             </div>
           </label>
-          <label><span className="entry-no">{nextEntryNo()}.</span> Ventilasi (m³/h)
+          <label><span className="entry-no">{nextEntryNo()}.</span> Kebisingan (dB)
             <div className="inline-fields">
-              <input value={formData.ventilationRate1} onChange={(e) => setFormData({ ...formData, ventilationRate1: e.target.value })} placeholder="1" />
-              <input value={formData.ventilationRate2} onChange={(e) => setFormData({ ...formData, ventilationRate2: e.target.value })} placeholder="2" />
-              <input value={formData.ventilationRate3} onChange={(e) => setFormData({ ...formData, ventilationRate3: e.target.value })} placeholder="3" />
+              <input value={formData.noise1} onChange={(e) => setFormData({ ...formData, noise1: e.target.value })} placeholder="1" />
+              <input value={formData.noise2} onChange={(e) => setFormData({ ...formData, noise2: e.target.value })} placeholder="2" />
+              <input value={formData.noise3} onChange={(e) => setFormData({ ...formData, noise3: e.target.value })} placeholder="3" />
+            </div>
+          </label>
+          <label><span className="entry-no">{nextEntryNo()}.</span> Pencahayaan (lux)
+            <div className="inline-fields">
+              <input value={formData.lighting1} onChange={(e) => setFormData({ ...formData, lighting1: e.target.value })} placeholder="1" />
+              <input value={formData.lighting2} onChange={(e) => setFormData({ ...formData, lighting2: e.target.value })} placeholder="2" />
+              <input value={formData.lighting3} onChange={(e) => setFormData({ ...formData, lighting3: e.target.value })} placeholder="3" />
             </div>
           </label>
         </div>
@@ -5685,11 +5685,11 @@ function UjiUdaraPage({ profile, locations, kelurahan, airTests, setAirTests }: 
               <th>Lokasi</th>
               <th>Suhu 1/2/3</th>
               <th>Kelembapan 1/2/3</th>
-              <th>Kebisingan 1/2/3</th>
-              <th>Pencahayaan 1/2/3</th>
+              <th>Ventilasi 1/2/3</th>
               <th>PM 2.5 1/2/3</th>
               <th>PM 10 1/2/3</th>
-              <th>Ventilasi 1/2/3</th>
+              <th>Kebisingan 1/2/3</th>
+              <th>Pencahayaan 1/2/3</th>
               <th>Aksi</th>
             </tr>
           </thead>
@@ -5706,11 +5706,11 @@ function UjiUdaraPage({ profile, locations, kelurahan, airTests, setAirTests }: 
                 <td><strong>{locationInfo.name}</strong>{locationInfo.kelurahanName && <> <br /><small>{locationInfo.kelurahanName}</small></>}</td>
                 <td className={hasEmptyUjiUdaraValues([test.temperature1, test.temperature2, test.temperature3]) ? 'uji-udara-empty-cell' : undefined}>{formatUjiUdaraValues([test.temperature1, test.temperature2, test.temperature3])}</td>
                 <td className={hasEmptyUjiUdaraValues([test.humidity1, test.humidity2, test.humidity3]) ? 'uji-udara-empty-cell' : undefined}>{formatUjiUdaraValues([test.humidity1, test.humidity2, test.humidity3])}</td>
-                <td className={hasEmptyUjiUdaraValues([test.noise1, test.noise2, test.noise3]) ? 'uji-udara-empty-cell' : undefined}>{formatUjiUdaraValues([test.noise1, test.noise2, test.noise3])}</td>
-                <td className={hasEmptyUjiUdaraValues([test.lighting1, test.lighting2, test.lighting3]) ? 'uji-udara-empty-cell' : undefined}>{formatUjiUdaraValues([test.lighting1, test.lighting2, test.lighting3])}</td>
+                <td className={hasEmptyUjiUdaraValues([test.ventilationRate1, test.ventilationRate2, test.ventilationRate3]) ? 'uji-udara-empty-cell' : undefined}>{formatUjiUdaraValues([test.ventilationRate1, test.ventilationRate2, test.ventilationRate3])}</td>
                 <td className={hasEmptyUjiUdaraValues([test.pm25_1, test.pm25_2, test.pm25_3]) ? 'uji-udara-empty-cell' : undefined}>{formatUjiUdaraValues([test.pm25_1, test.pm25_2, test.pm25_3])}</td>
                 <td className={hasEmptyUjiUdaraValues([test.pm10_1, test.pm10_2, test.pm10_3]) ? 'uji-udara-empty-cell' : undefined}>{formatUjiUdaraValues([test.pm10_1, test.pm10_2, test.pm10_3])}</td>
-                <td className={hasEmptyUjiUdaraValues([test.ventilationRate1, test.ventilationRate2, test.ventilationRate3]) ? 'uji-udara-empty-cell' : undefined}>{formatUjiUdaraValues([test.ventilationRate1, test.ventilationRate2, test.ventilationRate3])}</td>
+                <td className={hasEmptyUjiUdaraValues([test.noise1, test.noise2, test.noise3]) ? 'uji-udara-empty-cell' : undefined}>{formatUjiUdaraValues([test.noise1, test.noise2, test.noise3])}</td>
+                <td className={hasEmptyUjiUdaraValues([test.lighting1, test.lighting2, test.lighting3]) ? 'uji-udara-empty-cell' : undefined}>{formatUjiUdaraValues([test.lighting1, test.lighting2, test.lighting3])}</td>
                 <td>
                   <div className="entry-actions">
                     <button className="text-button btn-edit" onClick={() => openForm(test)} type="button">Edit</button>

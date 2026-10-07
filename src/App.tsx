@@ -4545,6 +4545,7 @@ function UjiAirPage({ profile, locations, kelurahan, waterTests, setWaterTests }
   const setTests = setWaterTests
   const [loading, setLoading] = useState(true)
   const [formOpen, setFormOpen] = useState(false)
+  const [locationTouched, setLocationTouched] = useState(false)
   // State untuk filter lokasi
   const [filterKelurahanId, setFilterKelurahanId] = useState('')
   const [filterStart, setFilterStart] = useState(defaultFilterStart)
@@ -4801,12 +4802,14 @@ function UjiAirPage({ profile, locations, kelurahan, waterTests, setWaterTests }
       })
     }
     setFormOpen(true)
+    setLocationTouched(false)
   }
 
   // Pastikan `lokasi` auto-terisi saat daftar lokasi selesai ter-load (tanpa refresh manual).
   useEffect(() => {
     if (!formOpen) return
     if (editing) return
+    if (locationTouched) return
     if (formData.locationId) return
     const defaultId = getDefaultLocationId()
     if (!defaultId) return
@@ -4969,7 +4972,7 @@ function UjiAirPage({ profile, locations, kelurahan, waterTests, setWaterTests }
         <h2>Informasi Uji</h2>
         <div className="form-grid">
           <label>Lokasi
-<LocationSearchSelect inputId="location-list-air" locations={locations} value={formData.locationId} onChange={(id) => setFormData({ ...formData, locationId: id })} />
+<LocationSearchSelect inputId="location-list-air" locations={locations} value={formData.locationId} onChange={(id) => { setLocationTouched(true); setFormData({ ...formData, locationId: id }) }} />
             <small style={{ display: 'block', marginTop: '6px', color: 'var(--muted)' }}>
               Kelurahan: {getLocationInfo(formData.locationId).kelurahanName}
             </small>
@@ -5188,6 +5191,7 @@ function UjiUdaraPage({ profile, locations, kelurahan, airTests, setAirTests }: 
   const setTests = setAirTests
   const [loading, setLoading] = useState(true)
   const [formOpen, setFormOpen] = useState(false)
+  const [locationTouched, setLocationTouched] = useState(false)
   const [editing, setEditing] = useState<AirQualityTest | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
@@ -5377,12 +5381,14 @@ function UjiUdaraPage({ profile, locations, kelurahan, airTests, setAirTests }: 
       })
     }
     setFormOpen(true)
+    setLocationTouched(false)
   }
 
   // Pastikan `lokasi` auto-terisi saat daftar lokasi selesai ter-load (tanpa refresh manual).
   useEffect(() => {
     if (!formOpen) return
     if (editing) return
+    if (locationTouched) return
     if (formData.locationId) return
     const defaultId = getDefaultLocationId()
     if (!defaultId) return
@@ -5532,7 +5538,7 @@ function UjiUdaraPage({ profile, locations, kelurahan, airTests, setAirTests }: 
         <h2>Informasi Uji</h2>
         <div className="form-grid">
           <label>Lokasi
-<LocationSearchSelect inputId="location-list-udara" locations={locations} value={formData.locationId} onChange={(id) => setFormData({ ...formData, locationId: id })} />
+<LocationSearchSelect inputId="location-list-udara" locations={locations} value={formData.locationId} onChange={(id) => { setLocationTouched(true); setFormData({ ...formData, locationId: id }) }} />
             <small style={{ display: 'block', marginTop: '6px', color: 'var(--muted)' }}>
               Kelurahan: {getLocationInfo(formData.locationId).kelurahanName}
             </small>

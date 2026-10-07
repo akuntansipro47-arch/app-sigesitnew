@@ -1113,8 +1113,6 @@ function App() {
     }
     const moduleKey = guarded[view]
     if (moduleKey && !canAccessModule(profile, moduleKey)) setView('beranda')
-    if (view === 'laporan' && profile.role === 'kader') setView('beranda')
-    if (view === 'laporan_dbd' && profile.role === 'kader') setView('beranda')
   }, [profile, view])
 
   if (supabaseConfigured && !authReady) return <main className="auth-shell"><p className="auth-loading">Memuat sesi…</p></main>
@@ -1134,8 +1132,8 @@ function App() {
     uji_udara: demoMode || canAccessModule(profile, 'uji_udara'),
     pangan: demoMode || canAccessModule(profile, 'pangan'),
     group_tpp: demoMode || canAccessModule(profile, 'group_tpp'),
-    laporan: demoMode || profile?.role !== 'kader',
-    laporan_dbd: demoMode || profile?.role !== 'kader',
+    laporan: true,
+    laporan_dbd: true,
   }
   const showPemeriksaan = access.uji_air || access.uji_udara || access.pangan
   const showDataMaster = access.wilayah || access.lokasi || access.group_tpp || access.pengguna

@@ -7345,12 +7345,21 @@ function LaporanDbdPage({ profile }: { profile?: UserProfile | null }) {
     if (filterKelurahan && r.kelurahan !== filterKelurahan) return false
     if (!inDateRange(r.dateMs, dateRangeMs(filterStart, filterEnd))) return false
     if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase()
-      const haystack = [r.tanggalSakit, r.nama, r.nik, r.kelamin, r.umur, r.kelurahan, r.rw, r.rt, r.rs, r.tanggalRawat, r.tanggalSelesai, r.kondisi, r.trombosit, r.gejala, r.wa]
-        .filter(Boolean)
-        .join(' ')
-        .toLowerCase()
-      if (!haystack.includes(q)) return false
+      const q = searchQuery.toLowerCase().trim()
+      // Pola "RW 1" / "RT 2" → cocokkan angka persis (agar "RW 1" tidak ikut menarik RW 13/18).
+      const rwRt = q.match(/^(rw|rt)\s*(\d+)$/)
+      if (rwRt) {
+        const wanted = Number.parseInt(rwRt[2], 10)
+        const raw = rwRt[1] === 'rw' ? r.rw : r.rt
+        const actual = raw.match(/\d+/) ? Number.parseInt(raw.match(/\d+/)![0], 10) : null
+        if (actual === null || actual !== wanted) return false
+      } else {
+        const haystack = [r.tanggalSakit, r.nama, r.nik, r.kelamin, r.umur, r.kelurahan, `RW ${r.rw}`, `RT ${r.rt}`, r.rs, r.tanggalRawat, r.tanggalSelesai, r.kondisi, r.trombosit, r.gejala, r.wa]
+          .filter(Boolean)
+          .join(' ')
+          .toLowerCase()
+        if (!haystack.includes(q)) return false
+      }
     }
     return true
   })

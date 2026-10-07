@@ -7308,7 +7308,11 @@ function LaporanDbdPage({ profile }: { profile?: UserProfile | null }) {
     if (!inDateRange(r.dateMs, dateRangeMs(filterStart, filterEnd))) return false
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase()
-      if (!r.nama.toLowerCase().includes(q) && !r.rs.toLowerCase().includes(q) && !r.gejala.toLowerCase().includes(q)) return false
+      const haystack = [r.tanggalSakit, r.nama, r.nik, r.kelamin, r.umur, r.kelurahan, r.rw, r.rt, r.rs, r.tanggalRawat, r.tanggalSelesai, r.kondisi, r.trombosit, r.gejala, r.wa]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase()
+      if (!haystack.includes(q)) return false
     }
     return true
   })
@@ -7396,7 +7400,7 @@ function LaporanDbdPage({ profile }: { profile?: UserProfile | null }) {
             <input type="date" value={filterEnd} onChange={(e) => setFilterEnd(e.target.value)} min={filterStart || undefined} />
           </label>
           <label>Pencarian
-            <input type="text" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder="Cari nama pasien, RS, atau gejala..." />
+            <input type="text" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder="Cari semua kolom (nama, NIK, kelurahan, RW, RT, RS, gejala, ...)" />
           </label>
         </div>
         <div style={{ display: 'flex', gap: '12px', alignItems: 'center', marginTop: '12px', flexWrap: 'wrap' }}>
@@ -7416,7 +7420,8 @@ function LaporanDbdPage({ profile }: { profile?: UserProfile | null }) {
                 <th>L/P</th>
                 <th>Umur</th>
                 <th>Kelurahan</th>
-                <th>RW/RT</th>
+                <th>RW</th>
+                <th>RT</th>
                 <th>Dirawat Di</th>
                 <th>Mulai Dirawat</th>
                 <th>Selesai Dirawat</th>
@@ -7434,7 +7439,8 @@ function LaporanDbdPage({ profile }: { profile?: UserProfile | null }) {
                   <td style={{ textAlign: 'center' }}>{r.kelamin}</td>
                   <td>{r.umur}</td>
                   <td>{r.kelurahan}</td>
-                  <td style={{ textAlign: 'center' }}>{r.rw}/{r.rt}</td>
+                  <td style={{ textAlign: 'center' }}>{r.rw || '-'}</td>
+                  <td style={{ textAlign: 'center' }}>{r.rt || '-'}</td>
                   <td>{r.rs}</td>
                   <td>{r.tanggalRawat || '-'}</td>
                   <td>{r.tanggalSelesai || '-'}</td>

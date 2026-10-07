@@ -4500,11 +4500,12 @@ function LocationSearchSelect({ locations, value, onChange }: { locations: Locat
   const selected = locations.find((loc) => loc.id === value)
   const [query, setQuery] = useState(selected?.name ?? '')
   const [open, setOpen] = useState(false)
-  // Sinkronkan teks input saat nilai luar berubah (mis. default lokasi / reset form),
-  // tapi jangan menimpa teks yang sedang diketik user saat value di-clear.
-  const skipSync = useRef(false)
+  // Sinkronkan teks input hanya saat nilai berubah DARI LUAR (mis. lokasi default
+  // diisi async / reset form). Perubahan akibat ketikan user tidak menimpa teks.
+  const lastValue = useRef(value)
   useEffect(() => {
-    if (skipSync.current) { skipSync.current = false; return }
+    if (lastValue.current === value) return
+    lastValue.current = value
     setQuery(selected?.name ?? '')
   }, [value, selected?.name])
   // Debounce: tunggu user selesai mengetik (~400ms) baru memfilter,
@@ -4522,7 +4523,7 @@ function LocationSearchSelect({ locations, value, onChange }: { locations: Locat
       <input
         autoComplete="off"
         onBlur={() => { window.setTimeout(() => setOpen(false), 150) }}
-        onChange={(e) => { setQuery(e.target.value); setOpen(true); if (value) { skipSync.current = true; onChange('') } }}
+        onChange={(e) => { setQuery(e.target.value); setOpen(true); if (value) { lastValue.current = ''; onChange('') } }}
         onFocus={() => setOpen(true)}
         placeholder="Ketik untuk mencari lokasi…"
         required={!value}

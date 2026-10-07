@@ -4500,8 +4500,13 @@ function LocationSearchSelect({ locations, value, onChange }: { locations: Locat
   const selected = locations.find((loc) => loc.id === value)
   const [query, setQuery] = useState(selected?.name ?? '')
   const [open, setOpen] = useState(false)
-  // Sinkronkan teks input saat nilai luar berubah (mis. default lokasi / reset form).
-  useEffect(() => { setQuery(selected?.name ?? '') }, [value, selected?.name])
+  // Sinkronkan teks input saat nilai luar berubah (mis. default lokasi / reset form),
+  // tapi jangan menimpa teks yang sedang diketik user saat value di-clear.
+  const skipSync = useRef(false)
+  useEffect(() => {
+    if (skipSync.current) { skipSync.current = false; return }
+    setQuery(selected?.name ?? '')
+  }, [value, selected?.name])
   const matches = locations
     .filter((loc) => loc.name.toLowerCase().includes(query.trim().toLowerCase()))
     .slice(0, 50)
@@ -4510,7 +4515,7 @@ function LocationSearchSelect({ locations, value, onChange }: { locations: Locat
       <input
         autoComplete="off"
         onBlur={() => { window.setTimeout(() => setOpen(false), 150) }}
-        onChange={(e) => { setQuery(e.target.value); setOpen(true); if (value) onChange('') }}
+        onChange={(e) => { setQuery(e.target.value); setOpen(true); if (value) { skipSync.current = true; onChange('') } }}
         onFocus={() => setOpen(true)}
         placeholder="Ketik untuk mencari lokasi…"
         required={!value}

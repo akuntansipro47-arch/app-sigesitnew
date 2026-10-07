@@ -1217,7 +1217,7 @@ function App() {
         </nav>
         {/* Modul Profil disembunyikan dari navigasi */}
       </aside>
-      <section className="content">{view === 'entry' && access.entry ? <EntryPage profile={profile} kelurahan={kelurahan} rw={rw} rt={rt} /> : view === 'wilayah' && access.wilayah ? <WilayahPage kelurahan={kelurahan} rw={rw} rt={rt} setKelurahan={setKelurahan} setRw={setRw} setRt={setRt} /> : view === 'pengguna' && access.pengguna ? <PenggunaPage kelurahan={kelurahan} rw={rw} rt={rt} currentUserId={session?.user.id} /> : view === 'profile' ? <ProfilePage /> : view === 'lokasi' && access.lokasi ? <LokasiPage kelurahan={kelurahan} rw={rw} rt={rt} locations={locations} reloadLocations={reloadLocations} /> : view === 'uji_air' && access.uji_air ? <UjiAirPage profile={profile} locations={locations} kelurahan={kelurahan} waterTests={waterTests} setWaterTests={setWaterTests} /> : view === 'uji_udara' && access.uji_udara ? <UjiUdaraPage profile={profile} locations={locations} kelurahan={kelurahan} airTests={airTests} setAirTests={setAirTests} /> : view === 'pangan' && access.pangan ? <PanganPage profile={profile} kelurahan={kelurahan} rw={rw} rt={rt} foodInspections={foodInspections} setFoodInspections={setFoodInspections} /> : view === 'group_tpp' && access.group_tpp ? <GroupTppPage /> : view === 'laporan' && access.laporan ? <LaporanPage /> : view === 'laporan_dbd' && access.laporan_dbd ? <LaporanDbdPage /> : view === 'settings' ? <SettingsPage /> : <Dashboard view={view} setView={setView} access={access} profile={profile} pkmInfo={pkmInfo} kelurahan={kelurahan} locations={locations} />}</section>
+      <section className="content">{view === 'entry' && access.entry ? <EntryPage profile={profile} kelurahan={kelurahan} rw={rw} rt={rt} /> : view === 'wilayah' && access.wilayah ? <WilayahPage kelurahan={kelurahan} rw={rw} rt={rt} setKelurahan={setKelurahan} setRw={setRw} setRt={setRt} /> : view === 'pengguna' && access.pengguna ? <PenggunaPage kelurahan={kelurahan} rw={rw} rt={rt} currentUserId={session?.user.id} /> : view === 'profile' ? <ProfilePage /> : view === 'lokasi' && access.lokasi ? <LokasiPage kelurahan={kelurahan} rw={rw} rt={rt} locations={locations} reloadLocations={reloadLocations} /> : view === 'uji_air' && access.uji_air ? <UjiAirPage profile={profile} locations={locations} kelurahan={kelurahan} waterTests={waterTests} setWaterTests={setWaterTests} /> : view === 'uji_udara' && access.uji_udara ? <UjiUdaraPage profile={profile} locations={locations} kelurahan={kelurahan} airTests={airTests} setAirTests={setAirTests} /> : view === 'pangan' && access.pangan ? <PanganPage profile={profile} kelurahan={kelurahan} rw={rw} rt={rt} foodInspections={foodInspections} setFoodInspections={setFoodInspections} /> : view === 'group_tpp' && access.group_tpp ? <GroupTppPage /> : view === 'laporan' && access.laporan ? <LaporanPage profile={profile} /> : view === 'laporan_dbd' && access.laporan_dbd ? <LaporanDbdPage profile={profile} /> : view === 'settings' ? <SettingsPage /> : <Dashboard view={view} setView={setView} access={access} profile={profile} pkmInfo={pkmInfo} kelurahan={kelurahan} locations={locations} />}</section>
     </section>
   </main>
 }
@@ -7035,7 +7035,7 @@ function parseAbjRows(rows: string[][]): AbjReport[] {
   return reports
 }
 
-function LaporanPage() {
+function LaporanPage({ profile }: { profile?: UserProfile | null }) {
   const [reports, setReports] = useState<AbjReport[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -7101,7 +7101,12 @@ function LaporanPage() {
           <h2>Laporan ABJ (Jentik)</h2>
           <p>Rekap laporan pemeriksaan jentik berkader, terintegrasi dari Google Sheet.</p>
         </div>
-        <button className="secondary" onClick={() => void load()} type="button">Muat Ulang</button>
+        <div style={{ display: 'flex', gap: '8px' }}>
+          {profile?.role === 'super_admin' && (
+            <a className="secondary" href="https://docs.google.com/spreadsheets/d/1ZJb9b0UevSdfhxtfBOYOyZbWQs9Knj7P1BkTXL7Fn9g" target="_blank" rel="noreferrer" style={{ textDecoration: 'none' }}>Buka Google Sheet</a>
+          )}
+          <button className="secondary" onClick={() => void load()} type="button">Muat Ulang</button>
+        </div>
       </header>
 
       {error && <div className="form-error" style={{ marginBottom: '16px' }}>{error}</div>}
@@ -7270,7 +7275,7 @@ function parseDbdRows(rows: string[][]): DbdReport[] {
   return reports
 }
 
-function LaporanDbdPage() {
+function LaporanDbdPage({ profile }: { profile?: UserProfile | null }) {
   const [reports, setReports] = useState<DbdReport[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -7331,7 +7336,12 @@ function LaporanDbdPage() {
           <h2>Laporan DBD</h2>
           <p>Rekap laporan kasus DBD warga, terintegrasi dari Google Sheet.</p>
         </div>
-        <button className="secondary" onClick={() => void load()} type="button">Muat Ulang</button>
+        <div style={{ display: 'flex', gap: '8px' }}>
+          {profile?.role === 'super_admin' && (
+            <a className="secondary" href="https://docs.google.com/spreadsheets/d/1r3f7iJhjFaXHR3079dPg_xRPdBetzsskf09yfmDVZrs" target="_blank" rel="noreferrer" style={{ textDecoration: 'none' }}>Buka Google Sheet</a>
+          )}
+          <button className="secondary" onClick={() => void load()} type="button">Muat Ulang</button>
+        </div>
       </header>
 
       {error && <div className="form-error" style={{ marginBottom: '16px' }}>{error}</div>}

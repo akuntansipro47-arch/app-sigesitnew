@@ -4507,8 +4507,15 @@ function LocationSearchSelect({ locations, value, onChange }: { locations: Locat
     if (skipSync.current) { skipSync.current = false; return }
     setQuery(selected?.name ?? '')
   }, [value, selected?.name])
+  // Debounce: tunggu user selesai mengetik (~400ms) baru memfilter,
+  // supaya tidak mencari di setiap ketukan.
+  const [debouncedQuery, setDebouncedQuery] = useState(query)
+  useEffect(() => {
+    const t = window.setTimeout(() => setDebouncedQuery(query), 400)
+    return () => window.clearTimeout(t)
+  }, [query])
   const matches = locations
-    .filter((loc) => loc.name.toLowerCase().includes(query.trim().toLowerCase()))
+    .filter((loc) => loc.name.toLowerCase().includes(debouncedQuery.trim().toLowerCase()))
     .slice(0, 50)
   return (
     <div style={{ position: 'relative' }}>
@@ -4537,7 +4544,7 @@ function LocationSearchSelect({ locations, value, onChange }: { locations: Locat
           ))}
         </ul>
       )}
-      {open && query.trim() && matches.length === 0 && (
+      {open && debouncedQuery.trim() && matches.length === 0 && (
         <div style={{ position: 'absolute', zIndex: 20, left: 0, right: 0, padding: '8px 12px', background: '#fff', border: '1px solid #d9d9d9', borderRadius: '8px', color: 'var(--muted)', fontSize: '13px' }}>
           Lokasi tidak ditemukan
         </div>

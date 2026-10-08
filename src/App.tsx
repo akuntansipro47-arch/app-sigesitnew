@@ -6872,6 +6872,164 @@ function GroupTppPage() {
   )
 }
 
+// ==================== Backup & Restore Data ====================
+
+// 12 tabel yang disertakan fitur Backup Data — Restore memakai daftar yang sama.
+const BACKUP_TABLES = [
+  'kelurahan', 'rw', 'rt', 'entries', 'family_cards', 'questionnaire_responses',
+  'locations', 'water_quality_tests', 'air_quality_tests', 'food_inspection_results',
+  'group_tpp', 'profiles',
+] as const
+
+type RestorePayload = { exportedAt?: string; tables: Record<string, any[]> }
+
+// Urutan MENGHAPUS saat restore: anak sebelum induk supaya tidak kena batasan
+// RESTRICT / NO ACTION. 'profiles' mendahului wilayah karena profil mereferensikan
+// kelurahan/rw/rt — tetapi baris profil milik sendiri TIDAK pernah dihapus,
+// karena tanpa profil sendiri seluruh kebijakan RLS menolak sesi yang sedang jalan.
+const RESTORE_DELETE_ORDER = [
+  'questionnaire_responses', 'family_cards', 'water_quality_tests', 'air_quality_tests',
+  'food_inspection_results', 'entries', 'locations', 'profiles', 'group_tpp', 'rt', 'rw', 'kelurahan',
+]
+
+// Urutan MENYISIPKAN: induk sebelum anak sesuai foreign key database.
+const RESTORE_INSERT_ORDER = [
+  'kelurahan', 'rw', 'rt', 'group_tpp', 'locations', 'profiles', 'entries',
+  'family_cards', 'questionnaire_responses', 'water_quality_tests', 'air_quality_tests',
+  'food_inspection_results',
+]
+
+// Kolom NOT NULL tanpa default — wajib terisi di file agar insert tidak gagal.
+const RESTORE_REQUIRED: Record<string, string[]> = {
+  kelurahan: ['code', 'name'],
+  rw: ['kelurahan_id', 'number'],
+  rt: ['rw_id', 'number'],
+  entries: ['entry_number', 'officer_id', 'kelurahan_id', 'rw_id', 'rt_id', 'created_by'],
+  family_cards: ['entry_id', 'kk_sequence', 'kk_number'],
+  questionnaire_responses: ['family_card_id', 'pillar', 'question_code', 'answer'],
+  locations: ['name'],
+  water_quality_tests: ['test_date'],
+  air_quality_tests: ['test_date', 'temperature_unit'],
+  food_inspection_results: ['entry_number', 'officer_id'],
+  group_tpp: ['name'],
+  profiles: ['nik', 'phone', 'full_name', 'username'],
+}
+
+// Foreign key yang DITEGAKKAN database — divalidasi sebelum data disentuh.
+// Baris dengan nilai null pada kolom opsional dilewati.
+const RESTORE_FK: Record<string, { col: string; table: string }[]> = {
+  rw: [{ col: 'kelurahan_id', table: 'kelurahan' }],
+  rt: [{ col: 'rw_id', table: 'rw' }],
+  locations: [
+    { col: 'kelurahan_id', table: 'kelurahan' },
+    { col: 'rw_id', table: 'rw' },
+    { col: 'rt_id', table: 'rt' },
+  ],
+  profiles: [
+    { col: 'kelurahan_id', table: 'kelurahan' },
+    { col: 'rw_id', table: 'rw' },
+    { col: 'rt_id', table: 'rt' },
+  ],
+  entries: [
+    { col: 'officer_id', table: 'profiles' },
+    { col: 'created_by', table: 'profiles' },
+  ],
+  family_cards: [{ col: 'entry_id', table: 'entries' }],
+  questionnaire_responses: [{ col: 'family_card_id', table: 'family_cards' }],
+  water_quality_tests: [
+    { col: 'location_id', table: 'locations' },
+    { col: 'officer_id', table: 'profiles' },
+  ],
+  air_quality_tests: [
+    { col: 'location_id', table: 'locations' },
+    { col: 'officer_id', table: 'profiles' },
+  ],
+  food_inspection_results: [
+    { col: 'jenis_tpp_id', table: 'group_tpp' },
+    { col: 'kelurahan_id', table: 'kelurahan' },
+    { col: 'rw_id', table: 'rw' },
+    { col: 'rt_id', table: 'rt' },
+    { col: 'officer_id', table: 'profiles' },
+  ],
+}
+
+// Periksa isi file backup SEBELUM menyentuh database. Mengembalikan daftar
+// masalah; daftar kosong berarti file aman dijalankan. Tujuannya: file rusak
+// harus gagal di tahap ini (data belum berubah), bukan gagal di tengah proses.
+function validateRestorePayload(payload: RestorePayload, myUid: string): string[] {
+  const tables = payload?.tables
+  if (!tables || typeof tables !== 'object' || Array.isArray(tables)) {
+    return ['File tidak berisi objek "tables" — format file bukan hasil fitur Backup Data.']
+  }
+  const missing = BACKUP_TABLES.filter(table => !Array.isArray(tables[table]))
+  if (missing.length > 0) {
+    return [`File tidak lengkap — tabel tidak ada: ${missing.join(', ')}. Fitur backup menyimpan 12 tabel, jadi buat file backup baru lalu coba lagi.`]
+  }
+
+  const errors: string[] = []
+  const ids: Record<string, Set<string>> = {}
+
+  // 1) Tiap baris wajib punya id unik, dan kolom NOT NULL harus terisi.
+  for (const table of BACKUP_TABLES) {
+    const rows = tables[table]
+    const set = new Set<string>()
+    let notObject = 0
+    let noId = 0
+    const emptyCols: Record<string, number> = {}
+    for (const row of rows) {
+      if (!row || typeof row !== 'object') { notObject += 1; continue }
+      if (typeof row.id !== 'string' || row.id === '') { noId += 1; continue }
+      set.add(row.id)
+      for (const col of RESTORE_REQUIRED[table] ?? []) {
+        if (row[col] === null || row[col] === undefined) emptyCols[col] = (emptyCols[col] ?? 0) + 1
+      }
+    }
+    ids[table] = set
+    const validRows = rows.length - notObject - noId
+    const duplicates = validRows - set.size
+    if (notObject > 0) errors.push(`${table}: ${notObject} baris bukan objek.`)
+    if (noId > 0) errors.push(`${table}: ${noId} baris tanpa id.`)
+    if (duplicates > 0) errors.push(`${table}: ${duplicates} id duplikat.`)
+    for (const [col, count] of Object.entries(emptyCols)) {
+      errors.push(`${table}.${col} kosong di ${count} baris.`)
+    }
+  }
+
+  // 2) Setiap foreign key harus menemukan baris induknya di dalam file.
+  for (const [table, fks] of Object.entries(RESTORE_FK)) {
+    const rows = tables[table] ?? []
+    for (const fk of fks) {
+      let broken = 0
+      for (const row of rows) {
+        const value = row?.[fk.col]
+        if (value === null || value === undefined || value === '') continue
+        if (!ids[fk.table]?.has(value)) broken += 1
+      }
+      if (broken > 0) errors.push(`${table}.${fk.col}: ${broken} baris merujuk ${fk.table} yang tidak ada di file.`)
+    }
+  }
+
+  // 3) Profil milik pemulih wajib ikut terbackup — baris itu yang menjaga sesi
+  //    tetap punya hak akses selama proses restore berjalan.
+  if (myUid && !ids['profiles']?.has(myUid)) {
+    errors.push('Profil Anda sendiri tidak ada di file backup — restore dibatalkan agar akun yang sedang dipakai tidak kehilangan hak akses.')
+  }
+
+  return errors
+}
+
+function downloadJson(data: unknown, filename: string) {
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = filename
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  URL.revokeObjectURL(url)
+}
+
 function SettingsPage({ profile }: { profile?: UserProfile | null }) {
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS)
   const [submitting, setSubmitting] = useState(false)
@@ -6879,7 +7037,39 @@ function SettingsPage({ profile }: { profile?: UserProfile | null }) {
   const [backingUp, setBackingUp] = useState(false)
   const [backupNote, setBackupNote] = useState('')
   const [backupProgress, setBackupProgress] = useState({ done: 0, total: 0, table: '' })
+  const [restorePayload, setRestorePayload] = useState<RestorePayload | null>(null)
+  const [restoreFileName, setRestoreFileName] = useState('')
+  const [restoreError, setRestoreError] = useState('')
+  const [restoring, setRestoring] = useState(false)
+  const [restoreNote, setRestoreNote] = useState('')
+  const [restoreProgress, setRestoreProgress] = useState({ done: 0, total: 0, label: '' })
+  const [snapshotFirst, setSnapshotFirst] = useState(true)
+  const restoreInputRef = useRef<HTMLInputElement | null>(null)
   const isSuperAdmin = profile?.role === 'super_admin'
+
+  // Ambil seluruh tabel sebagai payload backup. Dipakai oleh tombol Backup
+  // Data maupun cadangan otomatis yang berjalan sebelum restore.
+  async function buildBackupPayload(
+    onTable: (table: string, done: number, total: number) => void,
+  ): Promise<{ payload: RestorePayload; counts: string[]; errors: string[] }> {
+    const payload: RestorePayload = { exportedAt: new Date().toISOString(), tables: {} }
+    const counts: string[] = []
+    const errors: string[] = []
+    let done = 0
+    for (const table of BACKUP_TABLES) {
+      onTable(table, done, BACKUP_TABLES.length)
+      try {
+        const rows = await fetchAllRows(table, '*')
+        payload.tables[table] = rows
+        counts.push(`${table} (${rows.length})`)
+      } catch (err) {
+        errors.push(`${table}: ${err instanceof Error ? err.message : 'gagal'}`)
+      }
+      done += 1
+      onTable(table, done, BACKUP_TABLES.length)
+    }
+    return { payload, counts, errors }
+  }
 
   // Backup data: unduh seluruh tabel utama sebagai 1 file JSON (khusus super_admin).
   async function backupData() {
@@ -6887,38 +7077,11 @@ function SettingsPage({ profile }: { profile?: UserProfile | null }) {
     if (!supabase) { window.alert('Supabase belum dikonfigurasi.'); return }
     setBackingUp(true)
     setBackupNote('')
-    const tables = [
-      'kelurahan', 'rw', 'rt', 'entries', 'family_cards', 'questionnaire_responses',
-      'locations', 'water_quality_tests', 'air_quality_tests', 'food_inspection_results',
-      'group_tpp', 'profiles',
-    ]
-    setBackupProgress({ done: 0, total: tables.length, table: tables[0] })
-    const payload: Record<string, unknown> = { exportedAt: new Date().toISOString(), tables: {} }
-    const counts: string[] = []
-    const errors: string[] = []
-    let done = 0
-    for (const table of tables) {
-      setBackupProgress({ done, total: tables.length, table })
-      try {
-        const rows = await fetchAllRows(table, '*')
-        ;(payload.tables as Record<string, unknown>)[table] = rows
-        counts.push(`${table} (${rows.length})`)
-      } catch (err) {
-        errors.push(`${table}: ${err instanceof Error ? err.message : 'gagal'}`)
-      }
-      done += 1
-      setBackupProgress({ done, total: tables.length, table })
-    }
+    setBackupProgress({ done: 0, total: BACKUP_TABLES.length, table: BACKUP_TABLES[0] })
+    const { payload, counts, errors } = await buildBackupPayload((table, done, total) =>
+      setBackupProgress({ done, total, table }))
     try {
-      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' })
-      const url = URL.createObjectURL(blob)
-      const link = document.createElement('a')
-      link.href = url
-      link.download = `backup_sigesit_${new Date().toISOString().slice(0, 10)}.json`
-      document.body.appendChild(link)
-      link.click()
-      link.remove()
-      URL.revokeObjectURL(url)
+      downloadJson(payload, `backup_sigesit_${new Date().toISOString().slice(0, 10)}.json`)
       setBackupNote(errors.length === 0 ? `Backup selesai: ${counts.join(', ')}` : `Selesai dengan error — ${errors.join('; ')}`)
     } catch (err) {
       setBackupNote(`Gagal membuat file backup: ${err instanceof Error ? err.message : 'unknown'}`)
@@ -6928,7 +7091,156 @@ function SettingsPage({ profile }: { profile?: UserProfile | null }) {
     }
   }
 
+  // Baca & validasi file pilihan user. Belum ada data yang disentuh di tahap ini —
+  // file rusak akan ditolak di sini dengan daftar masalah yang jelas.
+  async function handleRestoreFile(e: ChangeEvent<HTMLInputElement>) {
+    const input = e.target
+    const file = input.files?.[0]
+    input.value = '' // file yang sama tetap boleh dipilih ulang
+    if (!file) return
+    setRestorePayload(null)
+    setRestoreFileName('')
+    setRestoreError('')
+    setRestoreNote('')
+    if (file.size > 200 * 1024 * 1024) {
+      setRestoreError('Ukuran file melebihi 200 MB — file ini bukan hasil fitur Backup Data.')
+      return
+    }
+    let parsed: RestorePayload
+    try {
+      parsed = JSON.parse(await file.text()) as RestorePayload
+    } catch {
+      setRestoreError('File bukan JSON yang valid.')
+      return
+    }
+    const problems = validateRestorePayload(parsed, profile?.id ?? '')
+    if (problems.length > 0) {
+      const shown = problems.slice(0, 10).map(problem => `• ${problem}`)
+      const more = problems.length > 10 ? `\n• …dan ${problems.length - 10} masalah lainnya` : ''
+      setRestoreError(`File gagal divalidasi — tidak ada data yang diubah:\n${shown.join('\n')}${more}`)
+      return
+    }
+    setRestorePayload(parsed)
+    setRestoreFileName(file.name)
+  }
+
+  // Restore: hapus seluruh baris 12 tabel lalu isi ulang dari file, berurutan
+  // sesuai foreign key. Profil milik sendiri tidak dihapus agar sesi tetap punya
+  // hak akses — baris itu justru diperbarui dari file lewat upsert.
+  async function runRestore() {
+    if (!supabase || !restorePayload || restoring || backingUp || !profile) return
+    const db = supabase // dipakai di dalam closure, jadi ditahan di variabel lokal
+    const tables = restorePayload.tables
+    const totalRows = BACKUP_TABLES.reduce((sum, table) => sum + (tables[table]?.length ?? 0), 0)
+    const confirmMessage = [
+      `Restore data dari "${restoreFileName}"?`,
+      '',
+      `• ${totalRows.toLocaleString('id-ID')} baris akan disisipkan ke 12 tabel.`,
+      '• SELURUH data 12 tabel saat ini akan dihapus dan diganti isi file.',
+      '• Proses memakan waktu 1–3 menit, jangan tutup halaman.',
+      snapshotFirst
+        ? '• Cadangan data saat ini diunduh lebih dulu sebagai jaring pengaman.'
+        : '• PERINGATAN: cadangan otomatis dinonaktifkan — tidak ada file pengaman.',
+      '',
+      'Lanjutkan?',
+    ].join('\n')
+    if (!window.confirm(confirmMessage)) return
+
+    setRestoring(true)
+    setRestoreNote('')
+    const totalUnits = RESTORE_DELETE_ORDER.length + totalRows
+    let done = 0
+    const progress = (label: string, add = 0) => {
+      done += add
+      setRestoreProgress({ done, total: totalUnits, label })
+    }
+
+    try {
+      // 0) Cadangan otomatis — satu-satunya jaring pengaman bila proses gagal di tengah.
+      if (snapshotFirst) {
+        progress('Mengunduh cadangan data saat ini…')
+        const snapshot = await buildBackupPayload((table, step, total) =>
+          setRestoreProgress({ done, total: totalUnits, label: `Cadangan dulu: ${table} (${step}/${total})` }))
+        if (snapshot.errors.length > 0) {
+          throw new Error(`cadangan awal gagal — ${snapshot.errors.join('; ')}`)
+        }
+        downloadJson(snapshot.payload, `backup_sebelum_restore_${new Date().toISOString().replace(/[:.]/g, '-')}.json`)
+      }
+
+      // 1) Fase hapus — urutan FK, profil sendiri dikecualikan.
+      for (const table of RESTORE_DELETE_ORDER) {
+        const rows = tables[table] ?? []
+        progress(`Menghapus ${table} (${rows.length.toLocaleString('id-ID')} baris)…`)
+        let query = db.from(table).delete().not('id', 'is', 'null')
+        if (table === 'profiles') query = query.neq('id', profile.id)
+        const { error } = await query
+        if (error) throw new Error(`fase hapus — ${table}: ${error.message}`)
+        if (table === 'profiles') {
+          // Rujuk profil sendiri ke null supaya penghapusan kelurahan/rw/rt tidak
+          // terblokir FK; nilainya dikembalikan oleh upsert pada fase sisip.
+          const { error: refErr } = await db
+            .from('profiles')
+            .update({ kelurahan_id: null, rw_id: null, rt_id: null } as never)
+            .eq('id', profile.id)
+          if (refErr) throw new Error(`fase hapus — profil sendiri: ${refErr.message}`)
+        }
+        progress(`Menghapus ${table} selesai`, 1)
+      }
+
+      // 2) Fase sisip — per batch besar agar cepat, tapi tetap di bawah batas
+      //    ukuran permintaan HTTP (±1 MB) agar tidak ditolak proxy.
+      for (const table of RESTORE_INSERT_ORDER) {
+        const rows = (tables[table] ?? []) as Record<string, unknown>[]
+        let sent = 0
+        let batch: Record<string, unknown>[] = []
+        let bytes = 0
+        const flush = async () => {
+          if (batch.length === 0) return
+          const chunk = batch
+          batch = []
+          bytes = 0
+          const { error } = table === 'profiles'
+            ? await db.from(table).upsert(chunk as never, { onConflict: 'id' })
+            : await db.from(table).insert(chunk as never)
+          if (error) {
+            throw new Error(`fase sisip — ${table} (baris ${sent + 1}–${sent + chunk.length}): ${error.message}`)
+          }
+          sent += chunk.length
+          progress(`Menyisipkan ${table} — ${sent.toLocaleString('id-ID')}/${rows.length.toLocaleString('id-ID')}`, chunk.length)
+        }
+        for (const row of rows) {
+          const size = JSON.stringify(row).length + 1
+          if (batch.length >= 1000 || (bytes + size) > 400_000) await flush()
+          batch.push(row)
+          bytes += size
+        }
+        await flush()
+        if (rows.length === 0) progress(`Menyisipkan ${table} — tidak ada baris di file`)
+      }
+
+      // 3) Verifikasi: cocokkan jumlah baris tiap tabel dengan isi file.
+      const mismatch: string[] = []
+      for (const table of BACKUP_TABLES) {
+        const { count, error } = await db.from(table).select('id', { count: 'exact', head: true })
+        const expected = tables[table]?.length ?? 0
+        if (error) mismatch.push(`${table} tak terbaca (${error.message})`)
+        else if (count !== expected) mismatch.push(`${table} ${count ?? 0}/${expected}`)
+      }
+      setRestorePayload(null)
+      setRestoreFileName('')
+      setRestoreNote(mismatch.length === 0
+        ? `Restore selesai — ${totalRows.toLocaleString('id-ID')} baris di 12 tabel berhasil dipulihkan. Muat ulang halaman (F5) untuk menampilkan data terbaru.`
+        : `Restore selesai dengan selisih jumlah baris: ${mismatch.join('; ')}. Periksa kembali file backup Anda.`)
+    } catch (err) {
+      setRestoreNote(`Gagal: ${err instanceof Error ? err.message : 'unknown'}. Proses berhenti di tengah — jalankan Restore sekali lagi dengan ${snapshotFirst ? 'file cadangan yang baru saja diunduh' : 'file backup Anda'} (restore selalu aman diulang karena selalu dimulai dari menghapus).`)
+    } finally {
+      setRestoring(false)
+      setRestoreProgress({ done: 0, total: 0, label: '' })
+    }
+  }
+
   const backupPercent = backupProgress.total > 0 ? Math.round((backupProgress.done / backupProgress.total) * 100) : (backingUp ? 0 : 100)
+  const restorePercent = restoreProgress.total > 0 ? Math.min(100, Math.round((restoreProgress.done / restoreProgress.total) * 100)) : 0
 
   useEffect(() => {
     setSettings(loadSettings())
@@ -7011,28 +7323,114 @@ function SettingsPage({ profile }: { profile?: UserProfile | null }) {
       </form>
 
       {isSuperAdmin && (
-        <div className="form-card" style={{ marginTop: '24px' }}>
-          <h3 style={{ marginBottom: '6px' }}>Backup Data</h3>
-          <p style={{ color: 'var(--muted)', fontSize: '14px', marginBottom: '12px' }}>
-            Unduh salinan seluruh data (wilayah, entry, kartu keluarga, kuesioner, lokasi, uji air, uji udara,
-            pangan, group TPP, dan pengguna) dalam 1 file <strong>JSON</strong> sebagai backup.
-          </p>
-          <button className="primary" disabled={backingUp} onClick={() => void backupData()} type="button">
-            {backingUp ? 'Membackup…' : 'Backup Data (Unduh JSON)'}
-          </button>
-          {backingUp && (
-            <div style={{ marginTop: '14px' }} aria-live="polite">
-              <div style={{ height: '12px', borderRadius: '8px', background: 'var(--line, #e5e7eb)', overflow: 'hidden' }}>
-                <div style={{ height: '100%', width: `${backupPercent}%`, background: 'linear-gradient(90deg, #2e7d5b, #4caf7d)', transition: 'width 250ms ease' }} />
+        <>
+          <div className="form-card" style={{ marginTop: '24px' }}>
+            <h3 style={{ marginBottom: '6px' }}>Backup Data</h3>
+            <p style={{ color: 'var(--muted)', fontSize: '14px', marginBottom: '12px' }}>
+              Unduh salinan seluruh data (wilayah, entry, kartu keluarga, kuesioner, lokasi, uji air, uji udara,
+              pangan, group TPP, dan pengguna) dalam 1 file <strong>JSON</strong> sebagai backup.
+            </p>
+            <button className="primary" disabled={backingUp || restoring} onClick={() => void backupData()} type="button">
+              {backingUp ? 'Membackup…' : 'Backup Data (Unduh JSON)'}
+            </button>
+            {backingUp && (
+              <div style={{ marginTop: '14px' }} aria-live="polite">
+                <div style={{ height: '12px', borderRadius: '8px', background: 'var(--line, #e5e7eb)', overflow: 'hidden' }}>
+                  <div style={{ height: '100%', width: `${backupPercent}%`, background: 'linear-gradient(90deg, #2e7d5b, #4caf7d)', transition: 'width 250ms ease' }} />
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '6px', fontSize: '13px', color: 'var(--muted)' }}>
+                  <span>{backupProgress.done}/{backupProgress.total} tabel — {backupProgress.table}</span>
+                  <strong>{backupPercent}%</strong>
+                </div>
               </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '6px', fontSize: '13px', color: 'var(--muted)' }}>
-                <span>{backupProgress.done}/{backupProgress.total} tabel — {backupProgress.table}</span>
-                <strong>{backupPercent}%</strong>
+            )}
+            {backupNote && <p style={{ marginTop: '10px', fontSize: '13px', color: backupNote.startsWith('Gagal') || backupNote.includes('error') ? '#c0392b' : 'var(--muted)' }}>{backupNote}</p>}
+          </div>
+
+          <div className="form-card" style={{ marginTop: '24px' }}>
+            <h3 style={{ marginBottom: '6px' }}>Restore Data</h3>
+            <p style={{ color: 'var(--muted)', fontSize: '14px', marginBottom: '12px' }}>
+              Kembalikan seluruh data dari file <strong>JSON</strong> hasil Backup Data.
+              Data saat ini di 12 tabel akan <strong>ditimpa</strong> oleh isi file.
+              File diperiksa dulu sampai tuntas — bila tidak valid, tidak ada data yang disentuh.
+            </p>
+            <input
+              ref={restoreInputRef}
+              type="file"
+              accept=".json,application/json"
+              onChange={(e) => void handleRestoreFile(e)}
+              style={{ display: 'none' }}
+            />
+            <button
+              className="primary"
+              disabled={restoring || backingUp}
+              onClick={() => restoreInputRef.current?.click()}
+              type="button"
+            >
+              {restoring ? 'Restore berjalan…' : 'Pilih File Backup…'}
+            </button>
+
+            {restoreError && (
+              <p style={{ marginTop: '10px', fontSize: '13px', color: '#c0392b', whiteSpace: 'pre-line' }}>{restoreError}</p>
+            )}
+
+            {restorePayload && !restoring && (
+              <div style={{ marginTop: '14px', border: '1px solid var(--line, #e5e7eb)', borderRadius: '10px', padding: '14px', background: 'rgba(179, 82, 31, 0.05)' }}>
+                <div style={{ fontWeight: 600, fontSize: 14, wordBreak: 'break-all' }}>{restoreFileName}</div>
+                <div style={{ fontSize: 13, color: 'var(--muted)', marginTop: '2px' }}>
+                  Diekspor {restorePayload.exportedAt ? new Date(restorePayload.exportedAt).toLocaleString('id-ID') : '—'} •{' '}
+                  {BACKUP_TABLES.reduce((sum, table) => sum + (restorePayload.tables[table]?.length ?? 0), 0).toLocaleString('id-ID')} baris
+                </div>
+                <ul style={{ margin: '8px 0 0', paddingLeft: '18px', fontSize: 13, color: 'var(--muted)', columns: 2 }}>
+                  {BACKUP_TABLES.map(table => (
+                    <li key={table}>{table}: {(restorePayload.tables[table]?.length ?? 0).toLocaleString('id-ID')}</li>
+                  ))}
+                </ul>
+                <p style={{ marginTop: '10px', fontSize: '13px', color: '#b3521f', fontWeight: 600 }}>
+                  ⚠ Peringatan: seluruh data 12 tabel saat ini akan dihapus dan diganti isi file ini.
+                </p>
+                <label style={{ display: 'flex', gap: '8px', alignItems: 'flex-start', fontSize: 13, margin: '8px 0 12px', cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={snapshotFirst}
+                    onChange={(e) => setSnapshotFirst(e.target.checked)}
+                    style={{ marginTop: 2 }}
+                  />
+                  <span>Unduh cadangan data saat ini sebelum restore (disarankan — jaring pengaman bila proses gagal di tengah)</span>
+                </label>
+                <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                  <button
+                    className="primary"
+                    style={{ background: '#b3521f' }}
+                    onClick={() => void runRestore()}
+                    type="button"
+                  >
+                    Timpa &amp; Restore Sekarang
+                  </button>
+                  <button onClick={() => { setRestorePayload(null); setRestoreFileName(''); }} type="button">Batal</button>
+                </div>
               </div>
-            </div>
-          )}
-          {backupNote && <p style={{ marginTop: '10px', fontSize: '13px', color: backupNote.startsWith('Gagal') || backupNote.includes('error') ? '#c0392b' : 'var(--muted)' }}>{backupNote}</p>}
-        </div>
+            )}
+
+            {restoring && (
+              <div style={{ marginTop: '14px' }} aria-live="polite">
+                <div style={{ height: '12px', borderRadius: '8px', background: 'var(--line, #e5e7eb)', overflow: 'hidden' }}>
+                  <div style={{ height: '100%', width: `${restorePercent}%`, background: 'linear-gradient(90deg, #b3521f, #e07b39)', transition: 'width 250ms ease' }} />
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', marginTop: '6px', fontSize: '13px', color: 'var(--muted)' }}>
+                  <span style={{ wordBreak: 'break-word' }}>{restoreProgress.label}</span>
+                  <strong>{restorePercent}%</strong>
+                </div>
+              </div>
+            )}
+
+            {restoreNote && (
+              <p style={{ marginTop: '10px', fontSize: '13px', color: restoreNote.startsWith('Gagal') ? '#c0392b' : restoreNote.includes('selisih') ? '#b3521f' : 'var(--muted)' }}>
+                {restoreNote}
+              </p>
+            )}
+          </div>
+        </>
       )}
     </section>
   )

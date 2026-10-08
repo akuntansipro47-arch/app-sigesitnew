@@ -6878,6 +6878,7 @@ function SettingsPage({ profile }: { profile?: UserProfile | null }) {
   const [success, setSuccess] = useState(false)
   const [backingUp, setBackingUp] = useState(false)
   const [backupNote, setBackupNote] = useState('')
+  const [backupProgress, setBackupProgress] = useState({ done: 0, total: 0, table: '' })
   const isSuperAdmin = profile?.role === 'super_admin'
 
   // Backup data: unduh seluruh tabel utama sebagai 1 file JSON (khusus super_admin).
@@ -6891,10 +6892,13 @@ function SettingsPage({ profile }: { profile?: UserProfile | null }) {
       'locations', 'water_quality_tests', 'air_quality_tests', 'food_inspection_results',
       'group_tpp', 'profiles',
     ]
+    setBackupProgress({ done: 0, total: tables.length, table: tables[0] })
     const payload: Record<string, unknown> = { exportedAt: new Date().toISOString(), tables: {} }
     const counts: string[] = []
     const errors: string[] = []
+    let done = 0
     for (const table of tables) {
+      setBackupProgress({ done, total: tables.length, table })
       try {
         const rows = await fetchAllRows(table, '*')
         ;(payload.tables as Record<string, unknown>)[table] = rows
@@ -6902,6 +6906,8 @@ function SettingsPage({ profile }: { profile?: UserProfile | null }) {
       } catch (err) {
         errors.push(`${table}: ${err instanceof Error ? err.message : 'gagal'}`)
       }
+      done += 1
+      setBackupProgress({ done, total: tables.length, table })
     }
     try {
       const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' })
@@ -6918,8 +6924,11 @@ function SettingsPage({ profile }: { profile?: UserProfile | null }) {
       setBackupNote(`Gagal membuat file backup: ${err instanceof Error ? err.message : 'unknown'}`)
     } finally {
       setBackingUp(false)
+      setBackupProgress({ done: 0, total: 0, table: '' })
     }
   }
+
+  const backupPercent = backupProgress.total > 0 ? Math.round((backupProgress.done / backupProgress.total) * 100) : (backingUp ? 0 : 100)
 
   useEffect(() => {
     setSettings(loadSettings())
@@ -7011,6 +7020,17 @@ function SettingsPage({ profile }: { profile?: UserProfile | null }) {
           <button className="primary" disabled={backingUp} onClick={() => void backupData()} type="button">
             {backingUp ? 'Membackup…' : 'Backup Data (Unduh JSON)'}
           </button>
+          {backingUp && (
+            <div style={{ marginTop: '14px' }} aria-live="polite">
+              <div style={{ height: '12px', borderRadius: '8px', background: 'var(--line, #e5e7eb)', overflow: 'hidden' }}>
+                <div style={{ height: '100%', width: `${backupPercent}%`, background: 'linear-gradient(90deg, #2e7d5b, #4caf7d)', transition: 'width 250ms ease' }} />
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '6px', fontSize: '13px', color: 'var(--muted)' }}>
+                <span>{backupProgress.done}/{backupProgress.total} tabel — {backupProgress.table}</span>
+                <strong>{backupPercent}%</strong>
+              </div>
+            </div>
+          )}
           {backupNote && <p style={{ marginTop: '10px', fontSize: '13px', color: backupNote.startsWith('Gagal') || backupNote.includes('error') ? '#c0392b' : 'var(--muted)' }}>{backupNote}</p>}
         </div>
       )}

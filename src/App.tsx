@@ -1217,7 +1217,7 @@ function App() {
         </nav>
         {/* Modul Profil disembunyikan dari navigasi */}
       </aside>
-      <section className="content">{view === 'entry' && access.entry ? <EntryPage profile={profile} kelurahan={kelurahan} rw={rw} rt={rt} /> : view === 'wilayah' && access.wilayah ? <WilayahPage kelurahan={kelurahan} rw={rw} rt={rt} setKelurahan={setKelurahan} setRw={setRw} setRt={setRt} /> : view === 'pengguna' && access.pengguna ? <PenggunaPage kelurahan={kelurahan} rw={rw} rt={rt} currentUserId={session?.user.id} /> : view === 'profile' ? <ProfilePage /> : view === 'lokasi' && access.lokasi ? <LokasiPage kelurahan={kelurahan} rw={rw} rt={rt} locations={locations} reloadLocations={reloadLocations} /> : view === 'uji_air' && access.uji_air ? <UjiAirPage profile={profile} locations={locations} kelurahan={kelurahan} waterTests={waterTests} setWaterTests={setWaterTests} /> : view === 'uji_udara' && access.uji_udara ? <UjiUdaraPage profile={profile} locations={locations} kelurahan={kelurahan} airTests={airTests} setAirTests={setAirTests} /> : view === 'pangan' && access.pangan ? <PanganPage profile={profile} kelurahan={kelurahan} rw={rw} rt={rt} foodInspections={foodInspections} setFoodInspections={setFoodInspections} /> : view === 'group_tpp' && access.group_tpp ? <GroupTppPage /> : view === 'laporan' && access.laporan ? <LaporanPage profile={profile} /> : view === 'laporan_dbd' && access.laporan_dbd ? <LaporanDbdPage profile={profile} /> : view === 'settings' ? <SettingsPage /> : <Dashboard view={view} setView={setView} access={access} profile={profile} pkmInfo={pkmInfo} kelurahan={kelurahan} locations={locations} />}</section>
+      <section className="content">{view === 'entry' && access.entry ? <EntryPage profile={profile} kelurahan={kelurahan} rw={rw} rt={rt} /> : view === 'wilayah' && access.wilayah ? <WilayahPage kelurahan={kelurahan} rw={rw} rt={rt} setKelurahan={setKelurahan} setRw={setRw} setRt={setRt} /> : view === 'pengguna' && access.pengguna ? <PenggunaPage kelurahan={kelurahan} rw={rw} rt={rt} currentUserId={session?.user.id} /> : view === 'profile' ? <ProfilePage /> : view === 'lokasi' && access.lokasi ? <LokasiPage kelurahan={kelurahan} rw={rw} rt={rt} locations={locations} reloadLocations={reloadLocations} /> : view === 'uji_air' && access.uji_air ? <UjiAirPage profile={profile} locations={locations} kelurahan={kelurahan} waterTests={waterTests} setWaterTests={setWaterTests} /> : view === 'uji_udara' && access.uji_udara ? <UjiUdaraPage profile={profile} locations={locations} kelurahan={kelurahan} airTests={airTests} setAirTests={setAirTests} /> : view === 'pangan' && access.pangan ? <PanganPage profile={profile} kelurahan={kelurahan} rw={rw} rt={rt} foodInspections={foodInspections} setFoodInspections={setFoodInspections} /> : view === 'group_tpp' && access.group_tpp ? <GroupTppPage /> : view === 'laporan' && access.laporan ? <LaporanPage profile={profile} /> : view === 'laporan_dbd' && access.laporan_dbd ? <LaporanDbdPage profile={profile} /> : view === 'settings' ? <SettingsPage profile={profile} /> : <Dashboard view={view} setView={setView} access={access} profile={profile} pkmInfo={pkmInfo} kelurahan={kelurahan} locations={locations} />}</section>
     </section>
   </main>
 }
@@ -6872,10 +6872,54 @@ function GroupTppPage() {
   )
 }
 
-function SettingsPage() {
+function SettingsPage({ profile }: { profile?: UserProfile | null }) {
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS)
   const [submitting, setSubmitting] = useState(false)
   const [success, setSuccess] = useState(false)
+  const [backingUp, setBackingUp] = useState(false)
+  const [backupNote, setBackupNote] = useState('')
+  const isSuperAdmin = profile?.role === 'super_admin'
+
+  // Backup data: unduh seluruh tabel utama sebagai 1 file JSON (khusus super_admin).
+  async function backupData() {
+    if (!isSuperAdmin || backingUp) return
+    if (!supabase) { window.alert('Supabase belum dikonfigurasi.'); return }
+    setBackingUp(true)
+    setBackupNote('')
+    const tables = [
+      'kelurahan', 'rw', 'rt', 'entries', 'family_cards', 'questionnaire_responses',
+      'locations', 'water_quality_tests', 'air_quality_tests', 'food_inspection_results',
+      'group_tpp', 'profiles',
+    ]
+    const payload: Record<string, unknown> = { exportedAt: new Date().toISOString(), tables: {} }
+    const counts: string[] = []
+    const errors: string[] = []
+    for (const table of tables) {
+      try {
+        const rows = await fetchAllRows(table, '*')
+        ;(payload.tables as Record<string, unknown>)[table] = rows
+        counts.push(`${table} (${rows.length})`)
+      } catch (err) {
+        errors.push(`${table}: ${err instanceof Error ? err.message : 'gagal'}`)
+      }
+    }
+    try {
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' })
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = `backup_sigesit_${new Date().toISOString().slice(0, 10)}.json`
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      URL.revokeObjectURL(url)
+      setBackupNote(errors.length === 0 ? `Backup selesai: ${counts.join(', ')}` : `Selesai dengan error — ${errors.join('; ')}`)
+    } catch (err) {
+      setBackupNote(`Gagal membuat file backup: ${err instanceof Error ? err.message : 'unknown'}`)
+    } finally {
+      setBackingUp(false)
+    }
+  }
 
   useEffect(() => {
     setSettings(loadSettings())
@@ -6956,6 +7000,20 @@ function SettingsPage() {
           </button>
         </div>
       </form>
+
+      {isSuperAdmin && (
+        <div className="form-card" style={{ marginTop: '24px' }}>
+          <h3 style={{ marginBottom: '6px' }}>Backup Data</h3>
+          <p style={{ color: 'var(--muted)', fontSize: '14px', marginBottom: '12px' }}>
+            Unduh salinan seluruh data (wilayah, entry, kartu keluarga, kuesioner, lokasi, uji air, uji udara,
+            pangan, group TPP, dan pengguna) dalam 1 file <strong>JSON</strong> sebagai backup.
+          </p>
+          <button className="primary" disabled={backingUp} onClick={() => void backupData()} type="button">
+            {backingUp ? 'Membackup…' : 'Backup Data (Unduh JSON)'}
+          </button>
+          {backupNote && <p style={{ marginTop: '10px', fontSize: '13px', color: backupNote.startsWith('Gagal') || backupNote.includes('error') ? '#c0392b' : 'var(--muted)' }}>{backupNote}</p>}
+        </div>
+      )}
     </section>
   )
 }

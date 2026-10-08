@@ -1,0 +1,94 @@
+name: Deploy SIGESIT ke VPS
+
+# Rilis ke produksi: push ke branch main.
+# Hasil build di-rsync ke VPS 38.9.46.150 -> /var/www/sigesit
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Cegah dua deploy berjalan bersamaan (bisa membuat folder campur aduk)
+concurrency:
+  group: deploy-sigesit-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        env:
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+        run: npm run build
+
+      # Jaring pengaman: gagalkan deploy kalau build salah sasaran
+      - name: Verify build targets VPS
+        run: |
+          set -e
+          echo "--- cek bundle menunjuk VPS ---"
+          if ! grep -rq "app-sigesit.com" dist/assets/; then
+            echo "::error::Bundle tidak menyebut app-sigesit.com — build salah sasaran."
+            exit 1
+          fi
+          echo "--- cek tidak ada referensi Supabase cloud lama ---"
+          if grep -rq "mxqxirqyygaiwuqnyfex" dist/; then
+            echo "::error::Bundle masih menunjuk project Supabase cloud lama."
+            exit 1
+          fi
+          echo "--- cek file wajib ada ---"
+          test -s dist/index.html || { echo "::error::index.html kosong"; exit 1; }
+          ls -la dist dist/assets
+
+      - name: Prepare SSH
+        env:
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+        run: |
+          set -e
+          mkdir -p ~/.ssh
+          printf '%s\n' "$VPS_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          # Simpan host key VPS supaya koneksi tidak ditolak (TOFU yang diverifikasi)
+          ssh-keyscan -H 38.9.46.150 >> ~/.ssh/known_hosts 2>/dev/null
+          # Uji koneksi dulu — kalau gagal, jangan sentuh folder situs
+          ssh -i ~/.ssh/deploy_key -o BatchMode=yes -o StrictHostKeyChecking=yes \
+              root@38.9.46.150 "echo koneksi OK" \
+            || { echo "::error::Gagal terhubung ke VPS via SSH"; exit 1; }
+
+      # --delay-updates : file ditulis ke nama sementara lalu dipindah di akhir,
+      #                   sehingga pengunjung tidak melihat folder setengah jadi.
+      # --delete-after  : file lama yang sudah tidak ada di build dihapus setelah update.
+      - name: Deploy dist ke VPS
+        run: |
+          set -e
+          rsync -az --delete-after --delay-updates \
+            --timeout=60 \
+            -e "ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes" \
+            dist/ root@38.9.46.150:/var/www/sigesit/
+          echo "rsync selesai"
+
+      - name: Verify deployment live
+        run: |
+          set -e
+          code=$(curl -s -o /dev/null -w '%{http_code}' --retry 5 --retry-delay 3 --retry-all-errors https://app-sigesit.com/)
+          echo "GET https://app-sigesit.com/ -> HTTP $code"
+          test "$code" = "200"
+          # Pastikan yang disajikan adalah build dari commit ini
+          bundle=$(curl -s https://app-sigesit.com/ | grep -o 'assets/index-[^"]*\.js' | head -1)
+          echo "bundle tersaji: $bundle"
+          test -n "$bundle"
+          echo "✅ Deploy selesai dan terverifikasi"

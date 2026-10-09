@@ -224,6 +224,40 @@ type Entry = {
   questionnaireResponses: QuestionnaireResponse[]
 }
 
+// Riwayat update per baris Entry Data. Diisi otomatis oleh database (trigger
+// AFTER UPDATE pada entries / family_cards / questionnaire_responses) berisi
+// kolom apa yang berubah, nilai lama -> baru, kapan, dan oleh siapa.
+type EntryUpdateLog = {
+  id: string
+  entryId: string
+  sourceTable: string // 'entries' | 'family_cards' | 'questionnaire_responses'
+  changed: Record<string, { old?: unknown; new?: unknown }>
+  context: Record<string, unknown> | null
+  changedBy: string | null
+  changedByName: string | null
+  createdAt: string
+}
+
+// Label kolom supaya "bagian yang diupdate" terbaca manusia (bukan nama kolom DB).
+const ENTRY_UPDATE_FIELD_LABELS: Record<string, string> = {
+  entry_number: 'Nomor Entry',
+  entry_date: 'Tanggal Entry',
+  officer_id: 'Petugas / Penginput',
+  created_by: 'Pembuat Data',
+  kelurahan_id: 'Kelurahan',
+  rw_id: 'RW',
+  rt_id: 'RT',
+  kk_sequence: 'Urutan KK',
+  kk_number: 'Nomor KK',
+  nik_kepala_keluarga: 'NIK Kepala Keluarga',
+  kepala_keluarga: 'Nama Kepala Keluarga',
+  address: 'Alamat',
+  total_jiwa: 'Total Jiwa',
+  jiwa_menetap: 'Jiwa Menetap',
+  jamban_count: 'Jumlah Jamban',
+  answer: 'Jawaban',
+}
+
 // Questionnaire definitions
 type Question = {
   code: string
@@ -2569,6 +2603,9 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
   const [filterKelurahanId, setFilterKelurahanId] = useState('')
   const [filterRwId, setFilterRwId] = useState('')
   const [filterRtId, setFilterRtId] = useState('')
+  // Riwayat update per baris: sumber indikator warna & panel detail perubahan.
+  const [entryUpdateLogs, setEntryUpdateLogs] = useState<Record<string, EntryUpdateLog[]>>({})
+  const [updateLogEntry, setUpdateLogEntry] = useState<Entry | null>(null)
   // Pagination tabel hasil: 1.000 baris per halaman.
   const [tablePage, setTablePage] = useState(1)
   // Hapus massal (multi-select baris) — hanya untuk level super_admin.
@@ -2699,6 +2736,7 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
       }
       if (!data || data.length === 0) {
         setEntries([])
+        setEntryUpdateLogs({})
         setLoading(false)
         return
       }
@@ -2762,6 +2800,32 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
       } catch (mapErr) {
         console.warn('Gagal memuat nama penginput:', mapErr)
       }
+      // Riwayat update per baris (indikator "pernah diupdate" + detailnya).
+      // Kegagalan memuat riwayat tidak boleh menggagalkan daftar entry.
+      try {
+        const rawLogs = await fetchAllRows<any>('entry_update_logs', '*', undefined, { column: 'created_at', ascending: false })
+        const loadedIds = new Set(entryIds)
+        const grouped: Record<string, EntryUpdateLog[]> = {}
+        for (const row of rawLogs) {
+          if (!loadedIds.has(row.entry_id)) continue
+          const log: EntryUpdateLog = {
+            id: row.id,
+            entryId: row.entry_id,
+            sourceTable: String(row.source_table || 'entries'),
+            changed: (row.changed || {}) as EntryUpdateLog['changed'],
+            context: row.context ?? null,
+            changedBy: row.changed_by ?? null,
+            changedByName: row.changed_by_name ?? null,
+            createdAt: row.created_at,
+          }
+          if (!grouped[log.entryId]) grouped[log.entryId] = []
+          grouped[log.entryId].push(log)
+        }
+        setEntryUpdateLogs(grouped)
+      } catch (logErr) {
+        console.warn('Gagal memuat riwayat update entry:', logErr)
+        setEntryUpdateLogs({})
+      }
       void getNextEntryNumber(entriesWithDetails)
     } catch (err) {
       console.error('Unexpected error in loadEntries:', err)
@@ -2769,6 +2833,58 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
     } finally {
       setLoading(false)
     }
+  }
+
+  // ==== Penampil riwayat update (indikator & detail perubahan per baris) ====
+  const logsForEntry = (id: string) => entryUpdateLogs[id] ?? []
+
+  function formatLogValue(field: string, value: unknown): string {
+    if (value === null || value === undefined || value === '') return '(kosong)'
+    if (typeof value === 'boolean') return value ? 'Ya' : 'Tidak'
+    const str = String(value)
+    if (field === 'kelurahan_id') return kelurahan.find(k => k.id === str)?.name || str
+    if (field === 'rw_id') {
+      const found = rw.find(r => r.id === str)
+      return found ? `RW ${found.name}` : str
+    }
+    if (field === 'rt_id') {
+      const found = rt.find(r => r.id === str)
+      return found ? `RT ${found.name}` : str
+    }
+    if (field === 'officer_id' || field === 'created_by') {
+      const name = officerName(str)
+      return name && name !== '-' ? name : str.slice(0, 8)
+    }
+    return str
+  }
+
+  function logActorName(log: EntryUpdateLog): string {
+    if (!log.changedBy) return 'Sistem'
+    if (log.changedBy === profile?.id) return profile?.fullName || 'Anda'
+    return log.changedByName || officerNames[log.changedBy] || 'Petugas lain'
+  }
+
+  function logTimeText(iso: string): string {
+    return new Date(iso).toLocaleString('id-ID', {
+      day: 'numeric', month: 'long', year: 'numeric',
+      hour: '2-digit', minute: '2-digit',
+    })
+  }
+
+  // Judul ringkas per log: bagian data apa yang disentuh perubahan ini.
+  function logSourceLabel(log: EntryUpdateLog): string {
+    const ctx = log.context || {}
+    if (log.sourceTable === 'family_cards') {
+      return `Kartu Keluarga ${String(ctx.kk_number ?? '-')} (${String(ctx.kepala_keluarga || '-')})`
+    }
+    if (log.sourceTable === 'questionnaire_responses') {
+      const pillar = String(ctx.pillar || '')
+      const code = String(ctx.question_code || '')
+      const question = questionnaireData[pillar]?.find(q => q.code === code)
+      const soal = question ? question.text : `${pillar.replace(/_/g, ' ')} / ${code}`
+      return ctx.kk_number ? `Kuesioner "${soal}" — KK ${String(ctx.kk_number)}` : `Kuesioner "${soal}"`
+    }
+    return 'Data Entry'
   }
 
   async function getNextEntryNumber(loadedEntries?: Entry[]) {
@@ -3794,12 +3910,16 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
                 const totalJamban = entry.familyCards.reduce((sum, fc) => sum + (fc.jambanCount || 0), 0)
                 const extraKkCount = entry.familyCards.length - 1
                 const isExpanded = expandedEntryId === entry.id
+                const rowLogs = logsForEntry(entry.id)
+                const rowUpdated = rowLogs.length > 0
+                // Aksen warna di sisi kiri baris agar terlihat sekilas mana yang pernah diupdate.
+                const updateBorderLeft = rowUpdated ? '3px solid #e07b39' : '3px solid transparent'
 
                 return (
                   <Fragment key={entry.id}>
                   <tr>
                     {canBulkDelete && (
-                      <td style={{ textAlign: 'center' }}>
+                      <td style={{ textAlign: 'center', borderLeft: updateBorderLeft }}>
                         <input
                           type="checkbox"
                           checked={selectedSet.has(entry.id)}
@@ -3808,7 +3928,7 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
                         />
                       </td>
                     )}
-                    <td style={{ textAlign: 'center', fontWeight: 600 }}>{pageStartIndex + index + 1}</td>
+                    <td style={{ textAlign: 'center', fontWeight: 600, borderLeft: canBulkDelete ? undefined : updateBorderLeft }}>{pageStartIndex + index + 1}</td>
                     <td style={{ textAlign: 'center', fontWeight: 600 }}>{entry.entryNumber || '-'}</td>
                     <td>{entry.entryDate}</td>
                     <td style={{ fontWeight: 500 }}>{officerName(entry.officerId)}</td>
@@ -3840,6 +3960,16 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
                     <td style={{ textAlign: 'center', fontWeight: 600 }}>{totalJamban}</td>
                     <td>
                       <div className="entry-actions">
+                        {rowUpdated && (
+                          <button
+                            className="text-button btn-update"
+                            onClick={() => setUpdateLogEntry(entry)}
+                            type="button"
+                            title={`Baris ini pernah diperbarui ${rowLogs.length}× — klik untuk melihat detail perubahannya`}
+                          >
+                            ● {rowLogs.length} update
+                          </button>
+                        )}
                         <button className="text-button btn-edit" onClick={() => openForm(entry)} type="button">Edit</button>
                         <button className="text-button btn-delete" onClick={() => deleteEntry(entry)} type="button">Hapus</button>
                       </div>
@@ -3875,6 +4005,64 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
         </div>
       </>
     )}
+      {updateLogEntry && (
+        <div className="modal-overlay" onClick={() => setUpdateLogEntry(null)} role="presentation">
+          <div
+            className="modal-content"
+            onClick={(event) => event.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+            style={{
+              maxWidth: '640px', width: '94%', margin: '60px auto 40px',
+              background: 'var(--paper)', borderRadius: '14px', padding: '22px 24px',
+              maxHeight: '82vh', overflowY: 'auto', boxShadow: '0 20px 60px rgba(0,0,0,0.25)',
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', alignItems: 'flex-start' }}>
+              <div>
+                <h3 style={{ margin: '0 0 4px' }}>Riwayat Update — Entry #{updateLogEntry.entryNumber || '-'}</h3>
+                <p style={{ margin: 0, fontSize: '13px', color: 'var(--muted)' }}>
+                  {logsForEntry(updateLogEntry.id).length} perubahan tercatat untuk baris ini, terbaru di atas.
+                </p>
+              </div>
+              <button className="text-button" onClick={() => setUpdateLogEntry(null)} type="button">Tutup</button>
+            </div>
+            <div style={{ marginTop: '14px' }}>
+              {logsForEntry(updateLogEntry.id).map((log) => (
+                <div
+                  key={log.id}
+                  style={{
+                    border: '1px solid var(--line)', borderLeft: '4px solid #e07b39',
+                    borderRadius: '10px', padding: '12px 14px', marginBottom: '10px',
+                    background: 'rgba(224, 123, 57, 0.05)',
+                  }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', flexWrap: 'wrap' }}>
+                    <strong style={{ fontSize: '13px', color: '#b45309' }}>{logSourceLabel(log)}</strong>
+                    <span style={{ fontSize: '13px', color: 'var(--muted)' }}>{logTimeText(log.createdAt)}</span>
+                  </div>
+                  <div style={{ fontSize: '13px', color: 'var(--muted)', marginTop: '2px' }}>
+                    Oleh: {logActorName(log)}
+                  </div>
+                  <ul style={{ margin: '8px 0 0', paddingLeft: '18px' }}>
+                    {Object.entries(log.changed).map(([field, change]) => (
+                      <li key={field} style={{ fontSize: '13px', marginBottom: '3px' }}>
+                        <strong>{ENTRY_UPDATE_FIELD_LABELS[field] || field}:</strong>{' '}
+                        <span style={{ color: '#b91c1c' }}>{formatLogValue(field, change?.old)}</span>
+                        {' → '}
+                        <span style={{ color: '#15803d' }}>{formatLogValue(field, change?.new)}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ))}
+            </div>
+            <p style={{ fontSize: '12px', color: 'var(--muted)', marginTop: '10px' }}>
+              Riwayat mulai dicatat sejak fitur ini diaktifkan; perubahan yang terjadi sebelumnya tidak ditampilkan.
+            </p>
+          </div>
+        </div>
+      )}
   </section>
 }
 

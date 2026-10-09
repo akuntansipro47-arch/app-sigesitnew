@@ -555,6 +555,8 @@
 .entry-actions .text-button.btn-edit:hover { background: #99f6e4; }
 .entry-actions .text-button.btn-delete { background: #fee2e2; color: #b91c1c; }
 .entry-actions .text-button.btn-delete:hover { background: #fecaca; }
+.entry-actions .text-button.btn-update { background: #ffedd5; color: #b45309; }
+.entry-actions .text-button.btn-update:hover { background: #fed7aa; }
 /* Samakan juga varian outline di modul Wilayah/Lokasi/Pengguna */
 .edit-button.btn-edit { background: #ccfbf1; border-color: #99f6e4; color: #0f766e; }
 .edit-button.btn-edit:hover { background: #99f6e4; }

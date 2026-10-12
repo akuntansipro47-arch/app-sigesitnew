@@ -2,7 +2,7 @@ import { Fragment, useCallback, useEffect, useRef, useState, type ChangeEvent, t
 import type { Session } from '@supabase/supabase-js'
 import * as XLSX from 'xlsx'
 import './App.css'
-import { supabase, supabaseConfigured } from './lib/supabase'
+import { supabase, supabaseConfigured, isDemoSessionActive, signInAsDemo, clearDemoDeviceCache } from './lib/supabase'
 import { exportToExcel } from './utils/exportExcel'
 import { loadSettings, saveSettings, DEFAULT_SETTINGS, themes, getThemeById, type AppSettings, type ThemeId, type Language } from './utils/settings'
 import { canAccessModule, getDefaultModuleAccess, MODULES, ROLE_LABELS } from './lib/auth'
@@ -1207,7 +1207,39 @@ function App() {
         <img className="brand-logo" src="/Aset/logo-sigesit-mark.png" alt="Logo SIGESIT Sadakeling" />
         <div><strong>SIGESIT SADAKELING {pkmName}</strong></div>
       </div>
-      <div className="topbar-actions"><span className="topbar-copy">Copyright : Januari 2026</span><span className="topbar-version" title="Versi build aplikasi">v{typeof __APP_VERSION__ === 'string' ? __APP_VERSION__ : 'dev'}</span><button className={`connection ${online ? 'online' : 'offline'}`} onClick={() => setOnline(!online)} type="button"><i />{online ? 'Terhubung' : 'Offline'}</button><button className="avatar" type="button" aria-label={`Profil ${displayName}`}>{initials || 'SZ'}</button>{session && <button className="logout" onClick={() => { void supabase?.auth.signOut() }} type="button">Keluar</button>}</div>
+      <div className="topbar-actions">
+        {isDemoSessionActive() && (
+          <>
+            <span
+              title="Mode Demo aktif — data dummy, hanya tersimpan di perangkat ini (localStorage)"
+              style={{
+                background: '#f59e0b', color: '#1f2937', fontWeight: 700, fontSize: '0.72rem',
+                padding: '4px 10px', borderRadius: '999px', letterSpacing: '0.4px', marginRight: '8px'
+              }}
+            >
+              🧪 MODE DEMO
+            </span>
+            <button
+              type="button"
+              title="Hapus seluruh data demo dari perangkat ini lalu muat ulang"
+              onClick={() => {
+                if (window.confirm('Hapus semua data demo (cache perangkat) dan kembalikan ke kondisi awal?')) {
+                  clearDemoDeviceCache()
+                  window.location.reload()
+                }
+              }}
+              style={{
+                background: 'transparent', color: '#f59e0b', border: '1px solid #f59e0b',
+                borderRadius: '999px', fontSize: '0.72rem', fontWeight: 700,
+                padding: '4px 10px', cursor: 'pointer', marginRight: '8px'
+              }}
+            >
+              Reset Data Demo
+            </button>
+          </>
+        )}
+        <span className="topbar-copy">Copyright : Januari 2026</span><span className="topbar-version" title="Versi build aplikasi">v{typeof __APP_VERSION__ === 'string' ? __APP_VERSION__ : 'dev'}</span><button className={`connection ${online ? 'online' : 'offline'}`} onClick={() => setOnline(!online)} type="button"><i />{online ? 'Terhubung' : 'Offline'}</button><button className="avatar" type="button" aria-label={`Profil ${displayName}`}>{initials || 'SZ'}</button>{session && <button className="logout" onClick={() => { void supabase?.auth.signOut() }} type="button">Keluar</button>}
+      </div>
     </header>
     <section className="workspace">
       <aside className="sidebar">
@@ -2094,6 +2126,21 @@ function Dashboard({ view, setView, access, profile, pkmInfo, kelurahan, locatio
   const pkmName = pkmInfo?.namaPkm || 'PKM Padasuka'
   const firstName = (profile?.fullName || 'Syifa').split(' ')[0]
 
+  // Daftar modul pada tagline mengikuti akses pengguna.
+  // Akses kader dibatasi: sebutan Entry, Uji Air, Uji Udara, dan Pangan tidak ditampilkan.
+  const taglineModules = (profileRole === 'kader'
+    ? []
+    : [
+        ...(access.entry ? ['Entry'] : []),
+        ...(access.uji_air ? ['Uji Air'] : []),
+        ...(access.uji_udara ? ['Uji Udara'] : []),
+        ...(access.pangan ? ['Pangan'] : []),
+      ]
+  ).concat(['Jentik', 'DBD'])
+  const taglineList = taglineModules.length > 2
+    ? `${taglineModules.slice(0, -1).join(', ')}, dan ${taglineModules[taglineModules.length - 1]}`
+    : taglineModules.join(' dan ')
+
   if (view !== 'beranda') return <section className="master-page"><div className="page-heading"><div><p className="eyebrow">DATA MASTER</p><h1>{view === 'wilayah' ? 'Data Wilayah' : view === 'pengguna' ? 'Pengguna Kader & Relawan' : view === 'lokasi' ? 'Data Lokasi' : view === 'uji_air' ? 'Uji Kualitas Air' : view === 'uji_udara' ? 'Uji Kualitas Udara' : view === 'pangan' ? 'Hasil Pemeriksaan Pangan/Makanan' : 'Entry Data'}</h1><p>Kelola data yang digunakan oleh seluruh petugas lapangan.</p></div></div></section>
 
   return <>
@@ -2101,7 +2148,7 @@ function Dashboard({ view, setView, access, profile, pkmInfo, kelurahan, locatio
       <div>
         <p className="eyebrow">DASHBOARD INFORMASI</p>
         <h1>{greeting}, {firstName}.</h1>
-        <p>Ringkasan real-time wilayah kerja {pkmName} — periode {periodLabel}. Entry, Uji Air, Uji Udara, Pangan, Jentik, dan DBD dalam satu layar.</p>
+        <p>Ringkasan real-time wilayah kerja {pkmName} — periode {periodLabel}. {taglineList} dalam satu layar.</p>
       </div>
       <div className="dash-toolbar">
         <button className="secondary" onClick={() => void loadSummary()} disabled={refreshing} type="button">{refreshing ? '⟳ Memperbarui…' : '⟳ Muat Ulang'}</button>
@@ -5930,7 +5977,16 @@ function LoginPage() {
     setSubmitting(true)
     const { error: signInError } = await supabase.auth.signInWithPassword({ email, password })
     setSubmitting(false)
-    if (signInError) setError('Email atau kata sandi salah.')
+    if (signInError) setError('Email/username atau kata sandi salah.')
+  }
+
+  // Masuk cepat ke mode demo: data dummy, disimpan di perangkat ini saja.
+  async function loginDemo() {
+    setError('')
+    setSubmitting(true)
+    const { error: demoError } = await signInAsDemo()
+    setSubmitting(false)
+    if (demoError) setError('Gagal masuk mode demo.')
   }
 
   return <main className="auth-shell" style={{
@@ -5955,7 +6011,7 @@ function LoginPage() {
       <h1>SIGESIT<span className="brand-sub">SADAKELING</span></h1>
       <p>Masuk untuk mengelola pendataan SIGESIT SADAKELING - KOTA CIMAHI.</p>
       {error && <div className="auth-error">{error}</div>}
-      <label>Email<input autoComplete="username" name="email" required type="email" /></label>
+      <label>Email / Username<input autoComplete="username" name="email" placeholder="email atau username" required type="text" /></label>
       <label>
         Kata sandi
         <div style={{ position: 'relative' }}>
@@ -5993,6 +6049,29 @@ function LoginPage() {
         </div>
       </label>
       <button className="primary" disabled={submitting} type="submit">{submitting ? 'Memproses…' : 'Masuk'}</button>
+      <div style={{
+        marginTop: '16px', padding: '12px', borderRadius: '8px',
+        backgroundColor: 'rgba(255,255,255,0.12)', border: '1px dashed rgba(255,255,255,0.4)',
+        textAlign: 'left', color: '#fff'
+      }}>
+        <p style={{ margin: '0 0 4px', fontWeight: 600 }}>🧪 Mode Demo</p>
+        <p style={{ margin: '0 0 10px', fontSize: '0.82rem', opacity: 0.85 }}>
+          Data dummy, bukan data asli. Semua perubahan hanya tersimpan di cache perangkat ini (localStorage) — <b>tidak masuk database utama</b>.
+        </p>
+        <p style={{ margin: '0 0 10px', fontSize: '0.82rem' }}>
+          User: <code style={{ background: 'rgba(0,0,0,0.3)', padding: '2px 6px', borderRadius: '4px' }}>demo</code> &nbsp;
+          Password: <code style={{ background: 'rgba(0,0,0,0.3)', padding: '2px 6px', borderRadius: '4px' }}>demo123</code>
+        </p>
+        <button
+          className="primary"
+          disabled={submitting}
+          onClick={() => { void loginDemo() }}
+          style={{ width: '100%', backgroundColor: 'rgba(255,255,255,0.25)' }}
+          type="button"
+        >
+          {submitting ? 'Memproses…' : 'Masuk Mode Demo Sekarang'}
+        </button>
+      </div>
       <p className="auth-copy">Copyright : Januari 2026</p>
     </form>
   </main>

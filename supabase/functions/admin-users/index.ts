@@ -39,6 +39,15 @@ function normalizeModuleAccess(role: AppRole, value: unknown): ModuleAccess {
   return { entry: true, wilayah: false, pengguna: false, lokasi: false, uji_air: false, uji_udara: false, pangan: false, group_tpp: false }
 }
 
+// Kader boleh memegang lebih dari satu RT (1 kelurahan & 1 RW sama).
+function normalizeRtIds(rtIds: unknown, rtId?: unknown): string[] | null {
+  if (Array.isArray(rtIds)) {
+    const list = rtIds.map((value) => String(value ?? '')).filter((value) => value !== '')
+    return list.length > 0 ? list : null
+  }
+  return rtId ? [String(rtId)] : null
+}
+
 function validatePassword(password: string): string | null {
   if (!/[A-Z]/.test(password)) return 'Password harus mengandung huruf besar.'
   if (!/[a-z]/.test(password)) return 'Password harus mengandung huruf kecil.'
@@ -103,7 +112,7 @@ Deno.serve(async (req) => {
     const action = body.action as string
 
     if (action === 'create') {
-      const { email, password, fullName, username, nik, phone, role, kelurahanId, rwId, rtId, moduleAccess } = body
+      const { email, password, fullName, username, nik, phone, role, kelurahanId, rwId, rtId, rtIds, moduleAccess } = body
       if (!email || !fullName || !username || !nik || !phone) {
         return json({ error: 'Data wajib belum lengkap' }, 400)
       }
@@ -120,14 +129,22 @@ Deno.serve(async (req) => {
       if (createError || !created.user) return json({ error: createError?.message ?? 'Gagal membuat akun' }, 400)
 
       const finalRole = normalizeRole(role)
-      const { error: profileError } = await admin.from('profiles').insert({
+      const profilePayload: Record<string, unknown> = {
         id: created.user.id,
         email, full_name: fullName, username, nik, phone,
         role: finalRole,
         kelurahan_id: kelurahanId || null, rw_id: rwId || null, rt_id: rtId || null,
+        rt_ids: normalizeRtIds(rtIds, rtId),
         module_access: normalizeModuleAccess(finalRole, moduleAccess),
         is_temp_password: true,
-      })
+      }
+      let { error: profileError } = await admin.from('profiles').insert(profilePayload)
+      if (profileError && /rt_ids/.test(profileError.message)) {
+        // Migrasi profiles_multi_rt belum dijalankan — ulangi tanpa kolom rt_ids.
+        delete profilePayload.rt_ids
+        const retry = await admin.from('profiles').insert(profilePayload)
+        profileError = retry.error
+      }
       if (profileError) {
         await admin.auth.admin.deleteUser(created.user.id)
         return json({ error: profileError.message }, 400)
@@ -145,7 +162,7 @@ Deno.serve(async (req) => {
     }
 
     if (action === 'update') {
-      const { id, fullName, username, nik, phone, role, kelurahanId, rwId, rtId, isActive, moduleAccess, password, email } = body
+      const { id, fullName, username, nik, phone, role, kelurahanId, rwId, rtId, rtIds, isActive, moduleAccess, password, email } = body
       if (!id) return json({ error: 'ID pengguna tidak ditemukan' }, 400)
 
       if (nik !== undefined) {
@@ -163,6 +180,12 @@ Deno.serve(async (req) => {
       if (kelurahanId !== undefined) updates.kelurahan_id = kelurahanId || null
       if (rwId !== undefined) updates.rw_id = rwId || null
       if (rtId !== undefined) updates.rt_id = rtId || null
+      if (rtIds !== undefined) {
+        const list = normalizeRtIds(rtIds, rtId)
+        updates.rt_ids = list
+        // rt_id tetap dijaga = RT pertama agar kompatibel dengan data lama.
+        if (list && list.length > 0) updates.rt_id = list[0]
+      }
       if (isActive !== undefined) updates.is_active = isActive
       if (email !== undefined) updates.email = email
 
@@ -176,7 +199,13 @@ Deno.serve(async (req) => {
       }
 
       if (Object.keys(updates).length) {
-        const { error } = await admin.from('profiles').update(updates).eq('id', id)
+        let { error } = await admin.from('profiles').update(updates).eq('id', id)
+        if (error && /rt_ids/.test(error.message)) {
+          // Migrasi profiles_multi_rt belum dijalankan — ulangi tanpa rt_ids.
+          delete updates.rt_ids
+          const retry = await admin.from('profiles').update(updates).eq('id', id)
+          error = retry.error
+        }
         if (error) return json({ error: error.message }, 400)
       }
 

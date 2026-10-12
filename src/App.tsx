@@ -7795,12 +7795,14 @@ function parseAbjRows(rows: string[][]): AbjReport[] {
   return reports
 }
 
-// Notifikasi untuk tombol "Buka Google Sheet" saat mode demo aktif.
-// Fitur integrasi Google Sheet hanya tersedia di versi lengkap (akun asli),
-// jadi akun demo diberi tahu lewat notifikasi alih-alih membuka sheet sungguhan.
-function notifyGoogleSheetDemoOnly(): boolean {
+// Notifikasi untuk tombol integrasi Google (Sheet maupun Form) saat mode demo.
+// Fitur ini hanya tersedia di versi lengkap (akun asli), jadi akun demo diberi
+// tahu lewat notifikasi, dan link-nya dicegah terbuka (preventDefault).
+function notifyGoogleDemoOnly(kind: 'sheet' | 'form'): boolean {
   if (!isDemoSessionActive()) return false
-  window.alert('Google Sheet hanya tersedia di versi lengkap.\n\nAkun mode demo menampilkan data dummy dan tidak terhubung ke Google Sheet.')
+  window.alert(kind === 'sheet'
+    ? 'Google Sheet hanya tersedia di versi lengkap.\n\nAkun mode demo menampilkan data dummy dan tidak terhubung ke Google Sheet.'
+    : 'Input laporan hanya tersedia di versi lengkap.\n\nAkun mode demo menampilkan data dummy dan tidak terhubung ke Google Form.')
   return true
 }
 
@@ -7880,13 +7882,20 @@ function LaporanPage({ profile }: { profile?: UserProfile | null }) {
             <a
               className="secondary"
               href="https://docs.google.com/spreadsheets/d/1ZJb9b0UevSdfhxtfBOYOyZbWQs9Knj7P1BkTXL7Fn9g"
-              onClick={(event) => { if (notifyGoogleSheetDemoOnly()) event.preventDefault() }}
+              onClick={(event) => { if (notifyGoogleDemoOnly('sheet')) event.preventDefault() }}
               target="_blank"
               rel="noreferrer"
               style={{ textDecoration: 'none' }}
             >Buka Google Sheet</a>
           )}
-          <a className="primary" href="https://docs.google.com/forms/d/e/1FAIpQLSeOVoTsAL6lH3U1Wvo6YZ5HqvI0GYNrfYFuOapng4YBML3ALw/viewform?pli=1" target="_blank" rel="noreferrer" style={{ textDecoration: 'none' }}>Input Laporan Jentik</a>
+          <a
+            className="primary"
+            href="https://docs.google.com/forms/d/e/1FAIpQLSeOVoTsAL6lH3U1Wvo6YZ5HqvI0GYNrfYFuOapng4YBML3ALw/viewform?pli=1"
+            onClick={(event) => { if (notifyGoogleDemoOnly('form')) event.preventDefault() }}
+            target="_blank"
+            rel="noreferrer"
+            style={{ textDecoration: 'none' }}
+          >Input Laporan Jentik</a>
           <button className="secondary" onClick={() => void load()} type="button">Muat Ulang</button>
         </div>
       </header>
@@ -8141,13 +8150,20 @@ function LaporanDbdPage({ profile }: { profile?: UserProfile | null }) {
             <a
               className="secondary"
               href="https://docs.google.com/spreadsheets/d/1r3f7iJhjFaXHR3079dPg_xRPdBetzsskf09yfmDVZrs"
-              onClick={(event) => { if (notifyGoogleSheetDemoOnly()) event.preventDefault() }}
+              onClick={(event) => { if (notifyGoogleDemoOnly('sheet')) event.preventDefault() }}
               target="_blank"
               rel="noreferrer"
               style={{ textDecoration: 'none' }}
             >Buka Google Sheet</a>
           )}
-          <a className="primary" href="https://docs.google.com/forms/d/e/1FAIpQLSfX4jfr19Nw8GNm0VJteEDtde1lJmm-NOxb4OVdPlhhdrI9Uw/viewform" target="_blank" rel="noreferrer" style={{ textDecoration: 'none' }}>Input Laporan DBD</a>
+          <a
+            className="primary"
+            href="https://docs.google.com/forms/d/e/1FAIpQLSfX4jfr19Nw8GNm0VJteEDtde1lJmm-NOxb4OVdPlhhdrI9Uw/viewform"
+            onClick={(event) => { if (notifyGoogleDemoOnly('form')) event.preventDefault() }}
+            target="_blank"
+            rel="noreferrer"
+            style={{ textDecoration: 'none' }}
+          >Input Laporan DBD</a>
           <button className="secondary" onClick={() => void load()} type="button">Muat Ulang</button>
         </div>
       </header>

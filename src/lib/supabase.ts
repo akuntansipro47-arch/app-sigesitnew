@@ -3,7 +3,6 @@ import { getDemoClient } from './demo/demoEngine'
 import {
   DEMO_EMAIL,
   DEMO_PASSWORD,
-  DEMO_USERNAME,
   isDemoActive,
   matchesDemoCredential,
   resetDemoDeviceData,
@@ -152,20 +151,6 @@ export const supabase: SupabaseClient | null = realClient ? dispatcher : null
 /** True bila pengguna sedang masuk lewat akun demo (data dummy, cache perangkat). */
 export function isDemoSessionActive(): boolean {
   return isDemoActive()
-}
-
-export const DEMO_CREDENTIALS = {
-  username: DEMO_USERNAME,
-  password: DEMO_PASSWORD,
-  email: DEMO_EMAIL,
-} as const
-
-/** Masuk ke mode demo tanpa perlu mengetik kredensial. */
-export async function signInAsDemo() {
-  return demo().auth.signInWithPassword({ email: DEMO_USERNAME, password: DEMO_PASSWORD }) as Promise<{
-    data: { session: unknown; user: unknown } | null
-    error: { message: string } | null
-  }>
 }
 
 /**

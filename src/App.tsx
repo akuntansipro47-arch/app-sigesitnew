@@ -2,7 +2,8 @@ import { Fragment, useCallback, useEffect, useRef, useState, type ChangeEvent, t
 import type { Session } from '@supabase/supabase-js'
 import * as XLSX from 'xlsx'
 import './App.css'
-import { supabase, supabaseConfigured, isDemoSessionActive, signInAsDemo, clearDemoDeviceCache } from './lib/supabase'
+import { supabase, supabaseConfigured, isDemoSessionActive, clearDemoDeviceCache } from './lib/supabase'
+import { DEMO_ABJ_SHEET_CSV, DEMO_DBD_SHEET_CSV } from './lib/demo/demoSeed'
 import { exportToExcel } from './utils/exportExcel'
 import { loadSettings, saveSettings, DEFAULT_SETTINGS, themes, getThemeById, type AppSettings, type ThemeId, type Language } from './utils/settings'
 import { canAccessModule, getDefaultModuleAccess, MODULES, ROLE_LABELS } from './lib/auth'
@@ -1870,18 +1871,28 @@ function Dashboard({ view, setView, access, profile, pkmInfo, kelurahan, locatio
     if (!isKader) {
       jobs.push((async () => {
         try {
-          const response = await fetch(ABJ_SHEET_CSV_URL)
-          if (!response.ok) throw new Error(`HTTP ${response.status}`)
-          next.abj = parseAbjRows(parseCsv(await response.text()))
+          // Mode demo: pakai data dummy lokal, tanpa fetch ke Google Sheet asli.
+          if (isDemoSessionActive()) {
+            next.abj = parseAbjRows(parseCsv(DEMO_ABJ_SHEET_CSV))
+          } else {
+            const response = await fetch(ABJ_SHEET_CSV_URL)
+            if (!response.ok) throw new Error(`HTTP ${response.status}`)
+            next.abj = parseAbjRows(parseCsv(await response.text()))
+          }
         } catch {
           failed.push('Laporan Jentik')
         }
       })())
       jobs.push((async () => {
         try {
-          const response = await fetch(DBD_SHEET_CSV_URL)
-          if (!response.ok) throw new Error(`HTTP ${response.status}`)
-          next.dbd = parseDbdRows(parseCsv(await response.text()))
+          // Mode demo: pakai data dummy lokal, tanpa fetch ke Google Sheet asli.
+          if (isDemoSessionActive()) {
+            next.dbd = parseDbdRows(parseCsv(DEMO_DBD_SHEET_CSV))
+          } else {
+            const response = await fetch(DBD_SHEET_CSV_URL)
+            if (!response.ok) throw new Error(`HTTP ${response.status}`)
+            next.dbd = parseDbdRows(parseCsv(await response.text()))
+          }
         } catch {
           failed.push('Laporan DBD')
         }
@@ -5980,15 +5991,6 @@ function LoginPage() {
     if (signInError) setError('Email/username atau kata sandi salah.')
   }
 
-  // Masuk cepat ke mode demo: data dummy, disimpan di perangkat ini saja.
-  async function loginDemo() {
-    setError('')
-    setSubmitting(true)
-    const { error: demoError } = await signInAsDemo()
-    setSubmitting(false)
-    if (demoError) setError('Gagal masuk mode demo.')
-  }
-
   return <main className="auth-shell" style={{
     backgroundImage: 'url("/Aset/WhatsApp%20Image%202026-09-02%20at%201.21.00%20PM.jpeg")',
     backgroundSize: 'cover',
@@ -6049,29 +6051,6 @@ function LoginPage() {
         </div>
       </label>
       <button className="primary" disabled={submitting} type="submit">{submitting ? 'Memproses…' : 'Masuk'}</button>
-      <div style={{
-        marginTop: '16px', padding: '12px', borderRadius: '8px',
-        backgroundColor: 'rgba(255,255,255,0.12)', border: '1px dashed rgba(255,255,255,0.4)',
-        textAlign: 'left', color: '#fff'
-      }}>
-        <p style={{ margin: '0 0 4px', fontWeight: 600 }}>🧪 Mode Demo</p>
-        <p style={{ margin: '0 0 10px', fontSize: '0.82rem', opacity: 0.85 }}>
-          Data dummy, bukan data asli. Semua perubahan hanya tersimpan di cache perangkat ini (localStorage) — <b>tidak masuk database utama</b>.
-        </p>
-        <p style={{ margin: '0 0 10px', fontSize: '0.82rem' }}>
-          User: <code style={{ background: 'rgba(0,0,0,0.3)', padding: '2px 6px', borderRadius: '4px' }}>demo</code> &nbsp;
-          Password: <code style={{ background: 'rgba(0,0,0,0.3)', padding: '2px 6px', borderRadius: '4px' }}>demo123</code>
-        </p>
-        <button
-          className="primary"
-          disabled={submitting}
-          onClick={() => { void loginDemo() }}
-          style={{ width: '100%', backgroundColor: 'rgba(255,255,255,0.25)' }}
-          type="button"
-        >
-          {submitting ? 'Memproses…' : 'Masuk Mode Demo Sekarang'}
-        </button>
-      </div>
       <p className="auth-copy">Copyright : Januari 2026</p>
     </form>
   </main>
@@ -7816,6 +7795,15 @@ function parseAbjRows(rows: string[][]): AbjReport[] {
   return reports
 }
 
+// Notifikasi untuk tombol "Buka Google Sheet" saat mode demo aktif.
+// Fitur integrasi Google Sheet hanya tersedia di versi lengkap (akun asli),
+// jadi akun demo diberi tahu lewat notifikasi alih-alih membuka sheet sungguhan.
+function notifyGoogleSheetDemoOnly(): boolean {
+  if (!isDemoSessionActive()) return false
+  window.alert('Google Sheet hanya tersedia di versi lengkap.\n\nAkun mode demo menampilkan data dummy dan tidak terhubung ke Google Sheet.')
+  return true
+}
+
 function LaporanPage({ profile }: { profile?: UserProfile | null }) {
   const [reports, setReports] = useState<AbjReport[]>([])
   const [loading, setLoading] = useState(true)
@@ -7829,10 +7817,15 @@ function LaporanPage({ profile }: { profile?: UserProfile | null }) {
     setLoading(true)
     setError('')
     try {
-      const res = await fetch(ABJ_SHEET_CSV_URL)
-      if (!res.ok) throw new Error(`Google Sheet merespons HTTP ${res.status}`)
-      const text = await res.text()
-      setReports(parseAbjRows(parseCsv(text)))
+      // Mode demo: pakai data dummy lokal, tanpa fetch ke Google Sheet asli.
+      if (isDemoSessionActive()) {
+        setReports(parseAbjRows(parseCsv(DEMO_ABJ_SHEET_CSV)))
+      } else {
+        const res = await fetch(ABJ_SHEET_CSV_URL)
+        if (!res.ok) throw new Error(`Google Sheet merespons HTTP ${res.status}`)
+        const text = await res.text()
+        setReports(parseAbjRows(parseCsv(text)))
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Gagal memuat data laporan.')
     } finally {
@@ -7884,7 +7877,14 @@ function LaporanPage({ profile }: { profile?: UserProfile | null }) {
         </div>
         <div style={{ display: 'flex', gap: '8px' }}>
           {profile?.role === 'super_admin' && (
-            <a className="secondary" href="https://docs.google.com/spreadsheets/d/1ZJb9b0UevSdfhxtfBOYOyZbWQs9Knj7P1BkTXL7Fn9g" target="_blank" rel="noreferrer" style={{ textDecoration: 'none' }}>Buka Google Sheet</a>
+            <a
+              className="secondary"
+              href="https://docs.google.com/spreadsheets/d/1ZJb9b0UevSdfhxtfBOYOyZbWQs9Knj7P1BkTXL7Fn9g"
+              onClick={(event) => { if (notifyGoogleSheetDemoOnly()) event.preventDefault() }}
+              target="_blank"
+              rel="noreferrer"
+              style={{ textDecoration: 'none' }}
+            >Buka Google Sheet</a>
           )}
           <a className="primary" href="https://docs.google.com/forms/d/e/1FAIpQLSeOVoTsAL6lH3U1Wvo6YZ5HqvI0GYNrfYFuOapng4YBML3ALw/viewform?pli=1" target="_blank" rel="noreferrer" style={{ textDecoration: 'none' }}>Input Laporan Jentik</a>
           <button className="secondary" onClick={() => void load()} type="button">Muat Ulang</button>
@@ -8070,10 +8070,15 @@ function LaporanDbdPage({ profile }: { profile?: UserProfile | null }) {
     setLoading(true)
     setError('')
     try {
-      const res = await fetch(DBD_SHEET_CSV_URL)
-      if (!res.ok) throw new Error(`Google Sheet merespons HTTP ${res.status}`)
-      const text = await res.text()
-      setReports(parseDbdRows(parseCsv(text)))
+      // Mode demo: pakai data dummy lokal, tanpa fetch ke Google Sheet asli.
+      if (isDemoSessionActive()) {
+        setReports(parseDbdRows(parseCsv(DEMO_DBD_SHEET_CSV)))
+      } else {
+        const res = await fetch(DBD_SHEET_CSV_URL)
+        if (!res.ok) throw new Error(`Google Sheet merespons HTTP ${res.status}`)
+        const text = await res.text()
+        setReports(parseDbdRows(parseCsv(text)))
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Gagal memuat data laporan.')
     } finally {
@@ -8133,7 +8138,14 @@ function LaporanDbdPage({ profile }: { profile?: UserProfile | null }) {
         </div>
         <div style={{ display: 'flex', gap: '8px' }}>
           {profile?.role === 'super_admin' && (
-            <a className="secondary" href="https://docs.google.com/spreadsheets/d/1r3f7iJhjFaXHR3079dPg_xRPdBetzsskf09yfmDVZrs" target="_blank" rel="noreferrer" style={{ textDecoration: 'none' }}>Buka Google Sheet</a>
+            <a
+              className="secondary"
+              href="https://docs.google.com/spreadsheets/d/1r3f7iJhjFaXHR3079dPg_xRPdBetzsskf09yfmDVZrs"
+              onClick={(event) => { if (notifyGoogleSheetDemoOnly()) event.preventDefault() }}
+              target="_blank"
+              rel="noreferrer"
+              style={{ textDecoration: 'none' }}
+            >Buka Google Sheet</a>
           )}
           <a className="primary" href="https://docs.google.com/forms/d/e/1FAIpQLSfX4jfr19Nw8GNm0VJteEDtde1lJmm-NOxb4OVdPlhhdrI9Uw/viewform" target="_blank" rel="noreferrer" style={{ textDecoration: 'none' }}>Input Laporan DBD</a>
           <button className="secondary" onClick={() => void load()} type="button">Muat Ulang</button>

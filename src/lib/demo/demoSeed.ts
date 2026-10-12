@@ -374,6 +374,61 @@ export function buildDemoSeed(): Record<string, Row[]> {
   }
 }
 
+// Data dummy untuk modul Laporan Jentik (ABJ). Format CSV ini sengaja dibuat
+// identik dengan kolom Google Sheet asli sehingga diparse oleh parser yang sama
+// (parseAbjRows). Baris = [ ..., tanggal(1), kelurahan(2), rw(3), diperiksa(4),
+// positif(5), negatif(6), abj(8), pelapor(9), lokasiJentik(10), wa(11) ].
+export const DEMO_ABJ_SHEET_CSV = [
+  'No,Tanggal,Kelurahan,RW,Rumah Diperiksa,Positif Jentik,Negatif Jentik,ABJ,ABJ (%),Pelapor,Lokasi Ditemukan Jentik,No WhatsApp',
+  '1,' + daysAgo(2) + ',Padasuka,RW 01,20,3,17,,85,Siti Aminah (Demo),Ember terbuka / bak mandi,081200000001',
+  '2,' + daysAgo(4) + ',Padasuka,RW 02,18,1,17,,94.4,Budi Santoso (Demo),Vas tanaman,081200000002',
+  '3,' + daysAgo(6) + ',Citeureup,RW 01,25,6,19,,76,Rina Marlina (Demo),Bak penampungan air,081200000003',
+  '4,' + daysAgo(9) + ',Citeureup,RW 02,15,0,15,,100,Dedi Supriadi (Demo),Tidak ada,081200000004',
+  '5,' + daysAgo(12) + ',Baros,RW 01,22,4,18,,81.8,Nia Kurniasih (Demo),Palung / ember,081200000005',
+  '6,' + daysAgo(16) + ',Baros,RW 02,19,2,17,,89.5,Agus Setiawan (Demo),Tandon air,081200000006',
+  '7,' + daysAgo(21) + ',Padasuka,RW 01,17,5,12,,70.6,Yuli Rahmawati (Demo),Ember & vas,081200000007',
+  '8,' + daysAgo(26) + ',Citeureup,RW 01,21,3,18,,85.7,Tatang Suherman (Demo),Bak kamar mandi,081200000008',
+].join('\n')
+
+// Data dummy untuk modul Laporan DBD. Format CSV identik dengan kolom sheet
+// asli (parseDbdRows): tanggalSakit(3), nik(4), nama(5), kelamin(6), umur(7),
+// kelurahan(12), rw(13), rt(14), tanggalRawat(20), rs(21), tanggalSelesai(22),
+// kondisi(23), trombosit(24), gejala(25), wa(29). Kolom lain sengaja dikosongkan.
+export const DEMO_DBD_SHEET_CSV = (() => {
+  const header: string[] = Array.from({ length: 30 }, (_, i) => `kolom_${i}`)
+  header[3] = 'Tanggal Sakit'
+  header[4] = 'NIK'
+  header[5] = 'Nama'
+  header[6] = 'Jenis Kelamin'
+  header[7] = 'Umur'
+  header[12] = 'Kelurahan'
+  header[13] = 'RW'
+  header[14] = 'RT'
+  header[20] = 'Tanggal Masuk RS'
+  header[21] = 'RS'
+  header[22] = 'Tanggal Selesai'
+  header[23] = 'Kondisi'
+  header[24] = 'Trombosit'
+  header[25] = 'Gejala'
+  header[29] = 'No WhatsApp'
+
+  const pad = (row: Record<number, string>): string => {
+    const cells: string[] = Array.from({ length: 30 }, () => '')
+    Object.entries(row).forEach(([index, value]) => { cells[Number(index)] = value })
+    return cells.join(',')
+  }
+
+  const rows = [
+    { 3: daysAgo(3), 4: '3273012000000001', 5: 'Ahmad Hidayat (Demo)', 6: 'L', 7: '34', 12: 'Padasuka', 13: 'RW 01', 14: 'RT 01', 20: daysAgo(3), 21: 'RS Demo Kota', 22: daysAgo(1), 23: 'Sembuh', 24: '180.000', 25: 'Demam, ruam', 29: '081200000101' },
+    { 3: daysAgo(7), 4: '3273012000000002', 5: 'Rina Marlina (Demo)', 6: 'P', 7: '28', 12: 'Citeureup', 13: 'RW 02', 14: 'RT 01', 20: daysAgo(7), 21: 'RS Demo Kota', 22: daysAgo(4), 23: 'Sembuh', 24: '150.000', 25: 'Demam, nyeri sendi', 29: '081200000102' },
+    { 3: daysAgo(13), 4: '3273012000000003', 5: 'Dedi Supriadi (Demo)', 6: 'L', 7: '41', 12: 'Baros', 13: 'RW 01', 14: 'RT 02', 20: daysAgo(13), 21: 'RS Demo Bhakti', 22: daysAgo(9), 23: 'Sembuh', 24: '210.000', 25: 'Demam tinggi', 29: '081200000103' },
+    { 3: daysAgo(19), 4: '3273012000000004', 5: 'Nia Kurniasih (Demo)', 6: 'P', 7: '6', 12: 'Padasuka', 13: 'RW 02', 14: 'RT 01', 20: daysAgo(19), 21: 'RS Demo Bhakti', 22: daysAgo(15), 23: 'Sembuh', 24: '95.000', 25: 'Demam, mual', 29: '081200000104' },
+    { 3: daysAgo(24), 4: '3273012000000005', 5: 'Agus Setiawan (Demo)', 6: 'L', 7: '52', 12: 'Citeureup', 13: 'RW 01', 14: 'RT 01', 20: daysAgo(24), 21: 'RS Demo Kota', 22: daysAgo(20), 23: 'Sembuh', 24: '175.000', 25: 'Demam, sakit kepala', 29: '081200000105' },
+  ]
+
+  return [header.join(','), ...rows.map(pad)].join('\n')
+})()
+
 /** Akun yang bisa dipakai login pada mode demo. */
 export function buildDemoAuthUsers(): DemoAuthUser[] {
   const createdAt = stamp(90)

@@ -2138,18 +2138,21 @@ function Dashboard({ view, setView, access, profile, pkmInfo, kelurahan, locatio
   const firstName = (profile?.fullName || 'Syifa').split(' ')[0]
 
   // Daftar modul pada tagline mengikuti akses pengguna.
-  // Akses kader dibatasi: sebutan Entry, Uji Air, Uji Udara, dan Pangan tidak ditampilkan.
-  const taglineModules = (profileRole === 'kader'
-    ? []
+  // Akses kader: "Entry Data, Jentik dan DBD" — tanpa Uji Air, Uji Udara, dan Pangan.
+  const taglineModules = profileRole === 'kader'
+    ? ['Entry Data', 'Jentik', 'DBD']
     : [
         ...(access.entry ? ['Entry'] : []),
         ...(access.uji_air ? ['Uji Air'] : []),
         ...(access.uji_udara ? ['Uji Udara'] : []),
         ...(access.pangan ? ['Pangan'] : []),
+        'Jentik',
+        'DBD',
       ]
-  ).concat(['Jentik', 'DBD'])
+  // Kader: "Entry Data, Jentik dan DBD" (tanpa koma sebelum "dan");
+  // selain kader: "…, Jentik, dan DBD".
   const taglineList = taglineModules.length > 2
-    ? `${taglineModules.slice(0, -1).join(', ')}, dan ${taglineModules[taglineModules.length - 1]}`
+    ? `${taglineModules.slice(0, -1).join(', ')}${profileRole === 'kader' ? '' : ','} dan ${taglineModules[taglineModules.length - 1]}`
     : taglineModules.join(' dan ')
 
   if (view !== 'beranda') return <section className="master-page"><div className="page-heading"><div><p className="eyebrow">DATA MASTER</p><h1>{view === 'wilayah' ? 'Data Wilayah' : view === 'pengguna' ? 'Pengguna Kader & Relawan' : view === 'lokasi' ? 'Data Lokasi' : view === 'uji_air' ? 'Uji Kualitas Air' : view === 'uji_udara' ? 'Uji Kualitas Udara' : view === 'pangan' ? 'Hasil Pemeriksaan Pangan/Makanan' : 'Entry Data'}</h1><p>Kelola data yang digunakan oleh seluruh petugas lapangan.</p></div></div></section>

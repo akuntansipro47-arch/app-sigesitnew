@@ -2339,6 +2339,7 @@ function Dashboard({ view, setView, access, profile, pkmInfo, kelurahan, locatio
           <ul className="insight-list">
             <li><span>Rumah diperiksa</span><b>{abjDiperiksa}</b></li>
             <li><span>Positif jentik</span><b>{abjPositif}</b></li>
+            <li><span>Negatif jentik</span><b>{abjNegatif}</b></li>
             <li><span>Periode data</span><b>{yearLabel}</b></li>
           </ul>
         </article>}

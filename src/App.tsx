@@ -771,7 +771,7 @@ function App() {
   const [pkmInfo, setPkmInfo] = useState<PKMInfo | null>(null)
   const [session, setSession] = useState<Session | null>(null)
   const [profile, setProfile] = useState<UserProfile | null>(null)
-  const [, setProfileLoaded] = useState(!supabaseConfigured)
+  const [profileLoaded, setProfileLoaded] = useState(!supabaseConfigured)
   const [authReady, setAuthReady] = useState(!supabaseConfigured)
   const [showChangePassword, setShowChangePassword] = useState(false)
   const [changePasswordError, setChangePasswordError] = useState('')
@@ -946,6 +946,29 @@ function App() {
     }
     void loadProfile()
   }, [session])
+
+  // ==================== Auto-update (PWA) ====================
+  // Setiap build baru, server menayangkan sw.js baru. Workbox memakai
+  // skipWaiting + clientsClaim, jadi SW baru langsung aktif dan mengambil
+  // alih halaman. Begitu 'controllerchange' terjadi, halaman di-reload
+  // sekali (dengan penjaga sessionStorage agar tidak berulang) — user
+  // langsung mendapat versi terbaru tanpa refresh manual, pada login
+  // pertama setelah perubahan ter-deploy.
+  useEffect(() => {
+    if (!profileLoaded || !('serviceWorker' in navigator) || !import.meta.env.PROD) return
+    const RELOADED_KEY = 'sigesit-pwa-reloaded'
+    const onControllerChange = () => {
+      if (sessionStorage.getItem(RELOADED_KEY)) return
+      sessionStorage.setItem(RELOADED_KEY, '1')
+      window.location.reload()
+    }
+    navigator.serviceWorker.addEventListener('controllerchange', onControllerChange)
+    // Paksa pemeriksaan update saat aplikasi dibuka (login pertama setelah deploy)
+    navigator.serviceWorker.ready
+      .then((registration) => registration.update().catch(() => {}))
+      .catch(() => {})
+    return () => navigator.serviceWorker.removeEventListener('controllerchange', onControllerChange)
+  }, [profileLoaded])
 
   const reloadRegions = useCallback(async () => {
     async function loadRegions() {

@@ -7949,7 +7949,7 @@ function LaporanPage({ profile }: { profile?: UserProfile | null }) {
           </div>
         </article>
         <article className="stat-card">
-          <span className="stat-icon coral">🦟</span>
+          <span className="stat-icon coral"><img src="/Aset/jentik.svg" alt="Jentik nyamuk" style={{ width: '30px', height: '30px', objectFit: 'contain' }} /></span>
           <div>
             <p>Positif Jentik</p>
             <strong>{loading ? '…' : totalPositif}</strong>

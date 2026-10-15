@@ -7932,6 +7932,14 @@ function LaporanPage({ profile }: { profile?: UserProfile | null }) {
           </div>
         </article>
         <article className="stat-card">
+          <span className="stat-icon green">✅</span>
+          <div>
+            <p>Negatif Jentik</p>
+            <strong>{loading ? '…' : totalNegatif}</strong>
+            <small>Rumah bebas jentik (negatif)</small>
+          </div>
+        </article>
+        <article className="stat-card">
           <span className="stat-icon gold">%</span>
           <div>
             <p>ABJ Keseluruhan</p>

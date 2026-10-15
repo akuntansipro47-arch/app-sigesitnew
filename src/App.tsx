@@ -951,15 +951,17 @@ function App() {
   // Setiap build baru, server menayangkan sw.js baru. Workbox memakai
   // skipWaiting + clientsClaim, jadi SW baru langsung aktif dan mengambil
   // alih halaman. Begitu 'controllerchange' terjadi, halaman di-reload
-  // sekali (dengan penjaga sessionStorage agar tidak berulang) — user
-  // langsung mendapat versi terbaru tanpa refresh manual, pada login
-  // pertama setelah perubahan ter-deploy.
+  // sekali — user langsung mendapat versi terbaru tanpa refresh manual,
+  // pada login pertama setelah perubahan ter-deploy.
+  // Penjaga: simpan versi build yang terakhir di-reload. Reload hanya
+  // terjadi bila versi yang sedang berjalan berbeda, sehingga update
+  // berikutnya tetap terdeteksi dan tidak terjadi reload berulang.
   useEffect(() => {
     if (!profileLoaded || !('serviceWorker' in navigator) || !import.meta.env.PROD) return
-    const RELOADED_KEY = 'sigesit-pwa-reloaded'
+    const RELOADED_KEY = 'sigesit-pwa-reloaded-version'
     const onControllerChange = () => {
-      if (sessionStorage.getItem(RELOADED_KEY)) return
-      sessionStorage.setItem(RELOADED_KEY, '1')
+      if (sessionStorage.getItem(RELOADED_KEY) === __APP_VERSION__) return
+      sessionStorage.setItem(RELOADED_KEY, __APP_VERSION__)
       window.location.reload()
     }
     navigator.serviceWorker.addEventListener('controllerchange', onControllerChange)

@@ -6012,7 +6012,11 @@ function LoginPage() {
     setError('')
     if (!supabase) { setError('Supabase belum dikonfigurasi.'); return }
     const data = new FormData(event.currentTarget)
-    const email = String(data.get('email') ?? '').trim()
+    const identifier = String(data.get('email') ?? '').trim()
+    // Akun dibuat sebagai <username>@sigesit.local; Supabase Auth hanya menerima email.
+    const email = identifier.includes('@')
+      ? identifier
+      : `${identifier.replace(/^@/, '')}@sigesit.local`
     const password = String(data.get('password') ?? '')
     setSubmitting(true)
     const { error: signInError } = await supabase.auth.signInWithPassword({ email, password })

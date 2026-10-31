@@ -2585,30 +2585,27 @@ function downloadEntryImportTemplate() {
 // Daftar id dipecah per chunk (URL .in() terlalu panjang bisa gagal); tiap
 // chunk dihitung totalnya lalu seluruh halaman diambil PARALEL sehingga
 // 25rb+ baris tidak membutuhkan puluhan request berurutan.
-async function fetchInBatches<T>(table: string, column: string, ids: string[], batchSize = 100): Promise<T[]> {
+async function fetchInBatches<T>(table: string, column: string, ids: string[], batchSize = 400): Promise<T[]> {
   if (!supabase || ids.length === 0) return []
   const client = supabase
   const pageSize = 1000
   const chunks: string[][] = []
   for (let i = 0; i < ids.length; i += batchSize) chunks.push(ids.slice(i, i + batchSize))
 
+  // Tanpa query count terpisah: cukup loop halaman sampai hasilnya tidak penuh.
+  // Order 'id' menjaga paginasi stabil. Batch lebih besar (400) memangkas jumlah
+  // request secara drastis dibanding 100 per batch.
   const perChunk = await Promise.all(chunks.map(async (chunk): Promise<T[]> => {
-    const { count, error: countError } = await client
-      .from(table).select('*', { count: 'exact', head: true }).in(column, chunk)
-    if (countError) throw countError
-    const total = count ?? 0
-    if (total === 0) return []
-    const pages = Math.ceil(total / pageSize)
-    const pageResults = await Promise.all(
-      Array.from({ length: pages }, (_, page) => {
-        const from = page * pageSize
-        return client.from(table).select('*').in(column, chunk).range(from, from + pageSize - 1)
-      }),
-    )
     const rows: T[] = []
-    for (const res of pageResults) {
-      if (res.error) throw res.error
-      rows.push(...((res.data ?? []) as T[]))
+    for (let from = 0; ; from += pageSize) {
+      const { data, error } = await client
+        .from(table).select('*').in(column, chunk)
+        .order('id')
+        .range(from, from + pageSize - 1)
+      if (error) throw error
+      const page = (data ?? []) as T[]
+      rows.push(...page)
+      if (page.length < pageSize) break
     }
     return rows
   }))
@@ -2796,22 +2793,41 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
     }
     setLoading(true)
     try {
-      // Ambil SEMUA baris: Supabase membatasi 1.000 baris per query, jadi
-      // halaman data diambil berjenjang sampai habis agar tidak terpotong.
+      // Ambil SEMUA baris: Supabase membatasi 1.000 baris per query. Halaman
+      // pertama sekaligus menghitung total; sisanya diambil paralel agar tidak
+      // menunggu satu per satu.
       const pageSize = 1000
-      const data: any[] = []
-      let loadError: { message: string } | null = null
-      for (let from = 0; ; from += pageSize) {
-        let pageQuery = supabase.from('entries').select('*')
-        if (profile.role === 'kader') pageQuery = pageQuery.eq('officer_id', profile.id)
-        const pageRes = await pageQuery
+      const client = supabase
+      const buildPage = (from: number, to: number, withCount: boolean) => {
+        let query = client.from('entries').select('*', withCount ? { count: 'exact' } : undefined)
+        if (profile.role === 'kader') query = query.eq('officer_id', profile.id)
+        return query
           .order('entry_date', { ascending: false })
           .order('entry_number', { ascending: false })
-          .range(from, from + pageSize - 1)
-        if (pageRes.error) { loadError = pageRes.error; break }
-        const rows = pageRes.data ?? []
-        data.push(...rows)
-        if (rows.length < pageSize) break
+          .order('id')
+          .range(from, to)
+      }
+      const data: any[] = []
+      let loadError: { message: string } | null = null
+      const firstPage = await buildPage(0, pageSize - 1, true)
+      if (firstPage.error) {
+        loadError = firstPage.error
+      } else {
+        data.push(...(firstPage.data ?? []))
+        const total = firstPage.count ?? data.length
+        const pageCount = Math.ceil(total / pageSize)
+        if (pageCount > 1) {
+          const rest = await Promise.all(
+            Array.from({ length: pageCount - 1 }, (_, index) => {
+              const from = (index + 1) * pageSize
+              return buildPage(from, from + pageSize - 1, false)
+            }),
+          )
+          for (const res of rest) {
+            if (res.error) { loadError = res.error; break }
+            data.push(...(res.data ?? []))
+          }
+        }
       }
       const error = loadError
       console.log('loadEntries result:', { rows: data.length, error: error?.message })
@@ -2828,15 +2844,58 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
         return
       }
       const entryIds = data.map((e: any) => e.id)
-      // Hanya family cards yang dibutuhkan daftar; jawaban kuesioner dimuat
-      // terpisah saat form edit dibuka (lazy-load) agar daftar ringan walau
-      // jumlah jawaban puluhan ribu baris.
-      let fcArray: any[] = []
-      try {
-        fcArray = await fetchInBatches('family_cards', 'entry_id', entryIds)
-      } catch (fcError) {
-        console.error('Error loading family cards:', fcError)
-      }
+      // Kartu keluarga, nama penginput, dan riwayat update tidak saling
+      // bergantung — ambil bersamaan agar total waktu mengikuti request
+      // terlama, bukan penjumlahan semuanya.
+      const officerIds = [...new Set(data.map((e: any) => e.officer_id).filter(Boolean))] as string[]
+      // Jawaban kuesioner sengaja TIDAK dimuat di daftar (dipakai hanya saat
+      // form edit dibuka, sudah di-lazy-load di openForm).
+      const [fcArray, officerNamesMap, groupedLogs] = await Promise.all([
+        fetchInBatches<any>('family_cards', 'entry_id', entryIds).catch((fcError) => {
+          console.error('Error loading family cards:', fcError)
+          return [] as any[]
+        }),
+        (async (): Promise<Record<string, string>> => {
+          if (officerIds.length === 0) return {}
+          try {
+            const { data: profData, error: profError } = await client
+              .from('profiles').select('id, full_name').in('id', officerIds)
+            if (profError || !profData) return {}
+            const map: Record<string, string> = {}
+            profData.forEach((p: any) => { if (p?.id && p?.full_name) map[p.id] = String(p.full_name) })
+            return map
+          } catch (mapErr) {
+            console.warn('Gagal memuat nama penginput:', mapErr)
+            return {}
+          }
+        })(),
+        (async (): Promise<Record<string, EntryUpdateLog[]>> => {
+          try {
+            const rawLogs = await fetchAllRows<any>('entry_update_logs', '*', undefined, { column: 'created_at', ascending: false })
+            const loadedIds = new Set(entryIds)
+            const grouped: Record<string, EntryUpdateLog[]> = {}
+            for (const row of rawLogs) {
+              if (!loadedIds.has(row.entry_id)) continue
+              const log: EntryUpdateLog = {
+                id: row.id,
+                entryId: row.entry_id,
+                sourceTable: String(row.source_table || 'entries'),
+                changed: (row.changed || {}) as EntryUpdateLog['changed'],
+                context: row.context ?? null,
+                changedBy: row.changed_by ?? null,
+                changedByName: row.changed_by_name ?? null,
+                createdAt: row.created_at,
+              }
+              if (!grouped[log.entryId]) grouped[log.entryId] = []
+              grouped[log.entryId].push(log)
+            }
+            return grouped
+          } catch (logErr) {
+            console.warn('Gagal memuat riwayat update entry:', logErr)
+            return {}
+          }
+        })(),
+      ])
       // Group family cards by entry_id
       const fcByEntryId = new Map<string, typeof fcArray>()
       fcArray.forEach((fc: any) => {
@@ -2845,8 +2904,6 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
         fcByEntryId.set(fc.entry_id, arr)
       })
       // Map entries with proper camelCase conversion and grouped relations.
-      // Jawaban kuesioner sengaja TIDAK dimuat di daftar (dipakai hanya saat
-      // form edit dibuka, sudah di-lazy-load di openForm).
       const entriesWithDetails: Entry[] = data.map((entry: any) => {
         const fcs = fcByEntryId.get(entry.id) || []
         return {
@@ -2873,46 +2930,8 @@ function EntryPage({ profile, kelurahan, rw, rt }: { profile: UserProfile | null
         }
       })
       setEntries(entriesWithDetails)
-      // Petakan officer_id -> nama lengkap untuk kolom "Nama Penginput"
-      try {
-        const officerIds = [...new Set(data.map((e: any) => e.officer_id).filter(Boolean))] as string[]
-        if (officerIds.length > 0 && supabase) {
-          const { data: profData, error: profError } = await supabase.from('profiles').select('id, full_name').in('id', officerIds)
-          if (!profError && profData) {
-            const map: Record<string, string> = {}
-            profData.forEach((p: any) => { if (p?.id && p?.full_name) map[p.id] = String(p.full_name) })
-            setOfficerNames(map)
-          }
-        }
-      } catch (mapErr) {
-        console.warn('Gagal memuat nama penginput:', mapErr)
-      }
-      // Riwayat update per baris (indikator "pernah diupdate" + detailnya).
-      // Kegagalan memuat riwayat tidak boleh menggagalkan daftar entry.
-      try {
-        const rawLogs = await fetchAllRows<any>('entry_update_logs', '*', undefined, { column: 'created_at', ascending: false })
-        const loadedIds = new Set(entryIds)
-        const grouped: Record<string, EntryUpdateLog[]> = {}
-        for (const row of rawLogs) {
-          if (!loadedIds.has(row.entry_id)) continue
-          const log: EntryUpdateLog = {
-            id: row.id,
-            entryId: row.entry_id,
-            sourceTable: String(row.source_table || 'entries'),
-            changed: (row.changed || {}) as EntryUpdateLog['changed'],
-            context: row.context ?? null,
-            changedBy: row.changed_by ?? null,
-            changedByName: row.changed_by_name ?? null,
-            createdAt: row.created_at,
-          }
-          if (!grouped[log.entryId]) grouped[log.entryId] = []
-          grouped[log.entryId].push(log)
-        }
-        setEntryUpdateLogs(grouped)
-      } catch (logErr) {
-        console.warn('Gagal memuat riwayat update entry:', logErr)
-        setEntryUpdateLogs({})
-      }
+      setOfficerNames(officerNamesMap)
+      setEntryUpdateLogs(groupedLogs)
       void getNextEntryNumber(entriesWithDetails)
     } catch (err) {
       console.error('Unexpected error in loadEntries:', err)
